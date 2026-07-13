@@ -1,0 +1,25 @@
+# Local secrets
+config.yaml
+*.env
+.env*
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+temp/
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+
+# Generated artifacts
+code/
+backend/code/
+daomeng/daomeng/backend/code/
+daomeng/daomeng/backend/temp/
+
+# System files
+.DS_Store
