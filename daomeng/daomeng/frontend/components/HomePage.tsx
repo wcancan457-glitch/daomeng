@@ -258,7 +258,8 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
     formData.append('file', file);
 
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000'}/api/upload_file`, {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
+      const response = await fetch(`${apiBase}/api/upload_file`, {
         method: 'POST',
         body: formData,
       });

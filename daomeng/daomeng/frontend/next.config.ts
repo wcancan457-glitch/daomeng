@@ -1,66 +1,71 @@
 import type { NextConfig } from "next";
 
+const apiBase =
+  process.env.NEXT_PUBLIC_API_URL ||
+  process.env.NEXT_PUBLIC_API_BASE_URL ||
+  'http://127.0.0.1:8000';
+
 const nextConfig: NextConfig = {
   async rewrites() {
     return [
       {
         source: '/code/:path*',
-        destination: 'http://127.0.0.1:8000/code/:path*',
+        destination: `${apiBase}/code/:path*`,
       },
       {
         source: '/api/sessions',
-        destination: 'http://127.0.0.1:8000/api/sessions',
+        destination: `${apiBase}/api/sessions`,
       },
       {
         source: '/api/sessions/:path*',
-        destination: 'http://127.0.0.1:8000/api/sessions/:path*',
+        destination: `${apiBase}/api/sessions/:path*`,
       },
       // 工作流 API
       {
         source: '/api/project/:path*',
-        destination: 'http://127.0.0.1:8000/api/project/:path*',
+        destination: `${apiBase}/api/project/:path*`,
       },
       {
         source: '/api/stages',
-        destination: 'http://127.0.0.1:8000/api/stages',
+        destination: `${apiBase}/api/stages`,
       },
       {
         source: '/api/upload_media',
-        destination: 'http://127.0.0.1:8000/api/upload_media',
+        destination: `${apiBase}/api/upload_media`,
       },
       {
         source: '/api/models',
-        destination: 'http://127.0.0.1:8000/api/models',
+        destination: `${apiBase}/api/models`,
       },
       {
         source: '/api/config',
-        destination: 'http://127.0.0.1:8000/api/config',
+        destination: `${apiBase}/api/config`,
       },
       {
         source: '/api/cache/:path*',
-        destination: 'http://127.0.0.1:8000/api/cache/:path*',
+        destination: `${apiBase}/api/cache/:path*`,
       },
       // 一键 pipeline API
       {
         source: '/api/pipelines',
-        destination: 'http://127.0.0.1:8000/api/pipelines',
+        destination: `${apiBase}/api/pipelines`,
       },
       {
         source: '/api/pipelines/:path*',
-        destination: 'http://127.0.0.1:8000/api/pipelines/:path*',
+        destination: `${apiBase}/api/pipelines/:path*`,
       },
       {
         source: '/api/tasks',
-        destination: 'http://127.0.0.1:8000/api/tasks',
+        destination: `${apiBase}/api/tasks`,
       },
       {
         source: '/api/tasks/:path*',
-        destination: 'http://127.0.0.1:8000/api/tasks/:path*',
+        destination: `${apiBase}/api/tasks/:path*`,
       },
       // 临时工作台 API
       {
         source: '/api/sandbox/:path*',
-        destination: 'http://127.0.0.1:8000/api/sandbox/:path*',
+        destination: `${apiBase}/api/sandbox/:path*`,
       },
     ];
   },

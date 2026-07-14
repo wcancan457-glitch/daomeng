@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: daomeng-api
+    runtime: docker
+    rootDir: daomeng/daomeng/backend
+    plan: free
+    autoDeploy: true
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+      - key: PORT
+        value: 8000
+      - key: LOG_LEVEL
+        value: INFO
+      - key: SILICONFLOW_API_KEY
+        sync: false
+      - key: DASHSCOPE_API_KEY
+        sync: false
+      - key: ARK_API_KEY
+        sync: false
+      - key: KLING_ACCESS_KEY
+        sync: false
+      - key: KLING_SECRET_KEY
+        sync: false

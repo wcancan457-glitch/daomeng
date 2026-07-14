@@ -100,6 +100,70 @@ def _get(data: Dict[str, Any], path: str, default: Any = None) -> Any:
     return current
 
 
+def _set(data: Dict[str, Any], path: str, value: Any) -> None:
+    current: Dict[str, Any] = data
+    parts = path.split(".")
+    for part in parts[:-1]:
+        next_value = current.setdefault(part, {})
+        if not isinstance(next_value, dict):
+            next_value = {}
+            current[part] = next_value
+        current = next_value
+    current[parts[-1]] = value
+
+
+def _env(name: str) -> Optional[str]:
+    value = os.getenv(name)
+    if value is None:
+        return None
+    value = value.strip()
+    return value if value else None
+
+
+def _apply_env_overrides(data: Dict[str, Any]) -> Dict[str, Any]:
+    clean = copy.deepcopy(data)
+    env_map = {
+        "HOST": "server.host",
+        "PORT": "server.port",
+        "LOG_LEVEL": "server.log_level",
+        "ACCESS_LOG": "server.access_log",
+        "OPENAI_API_KEY": "api_providers.openai.api_key",
+        "OPENAI_BASE_URL": "api_providers.openai.base_url",
+        "GEMINI_API_KEY": "api_providers.gemini.api_key",
+        "GEMINI_BASE_URL": "api_providers.gemini.base_url",
+        "DEEPSEEK_API_KEY": "api_providers.deepseek.api_key",
+        "DEEPSEEK_BASE_URL": "api_providers.deepseek.base_url",
+        "SILICONFLOW_API_KEY": "api_providers.siliconflow.api_key",
+        "SILICONFLOW_BASE_URL": "api_providers.siliconflow.base_url",
+        "DASHSCOPE_API_KEY": "api_providers.dashscope.api_key",
+        "DASHSCOPE_BASE_URL": "api_providers.dashscope.base_url",
+        "ARK_API_KEY": "api_providers.ark.api_key",
+        "ARK_BASE_URL": "api_providers.ark.base_url",
+        "KLING_ACCESS_KEY": "api_providers.kling.access_key",
+        "KLING_SECRET_KEY": "api_providers.kling.secret_key",
+        "KLING_BASE_URL": "api_providers.kling.base_url",
+        "LLM_MODEL": "models.llm",
+        "VLM_MODEL": "models.vlm",
+        "IMAGE_T2I_MODEL": "models.image_t2i",
+        "IMAGE_IT2I_MODEL": "models.image_it2i",
+        "VIDEO_FIRST_FRAME_MODEL": "models.video_first_frame",
+        "VIDEO_START_END_MODEL": "models.video_start_end",
+        "VIDEO_REFERENCE_MODEL": "models.video_reference",
+        "VIDEO_GENERATION_MODE": "generation.video_generation_mode",
+        "VIDEO_RATIO": "generation.video_ratio",
+        "VIDEO_RESOLUTION": "generation.video_resolution",
+        "GENERATION_STYLE": "generation.style",
+    }
+    for env_name, config_path in env_map.items():
+        value = _env(env_name)
+        if value is not None:
+            _set(clean, config_path, value)
+
+    if _env("PORT") and not _env("HOST"):
+        _set(clean, "server.host", "0.0.0.0")
+    return clean
+
+
 def _coerce_config(data: Dict[str, Any]) -> Dict[str, Any]:
     clean = _deep_merge(DEFAULT_CONFIG, data)
     clean.pop("llm", None)
@@ -185,14 +249,14 @@ def load_config() -> Dict[str, Any]:
         if source:
             with source.open("r", encoding="utf-8") as f:
                 loaded = yaml.safe_load(f) or {}
-            return _coerce_config(loaded)
-        return copy.deepcopy(DEFAULT_CONFIG)
+            return _apply_env_overrides(_coerce_config(loaded))
+        return _apply_env_overrides(copy.deepcopy(DEFAULT_CONFIG))
 
     with CONFIG_PATH.open("r", encoding="utf-8") as f:
         loaded = yaml.safe_load(f) or {}
     if not isinstance(loaded, dict):
         raise ValueError("backend/config.yaml must contain a YAML mapping.")
-    return _coerce_config(loaded)
+    return _apply_env_overrides(_coerce_config(loaded))
 
 
 def save_config(values: Dict[str, Any]) -> Dict[str, Any]:
