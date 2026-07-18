@@ -14,6 +14,7 @@ import {
 } from '@/config/models';
 import { STAGES } from './TopBar';
 import { fetchModelGroupsByType, fetchVideoModelGroupsByAbility } from '@/lib/modelRegistry';
+import { authenticatedFetch } from '@/lib/auth';
 
 export interface ProjectParams {
   idea: string;
@@ -145,7 +146,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
       setConfigLoading(true);
       setConfigError('');
       try {
-        const resp = await fetch('/api/config');
+        const resp = await authenticatedFetch('/api/config');
         if (!resp.ok) throw new Error('读取默认模型配置失败');
         const data = await resp.json();
         const models = data.config?.models || {};
@@ -259,7 +260,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
 
     try {
       const apiBase = process.env.NEXT_PUBLIC_API_URL || process.env.NEXT_PUBLIC_API_BASE_URL || 'http://localhost:8000';
-      const response = await fetch(`${apiBase}/api/upload_file`, {
+      const response = await authenticatedFetch(`${apiBase}/api/upload_file`, {
         method: 'POST',
         body: formData,
       });

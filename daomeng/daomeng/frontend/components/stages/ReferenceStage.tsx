@@ -5,6 +5,7 @@ import { Image as ImageIcon, RefreshCw, ChevronLeft, ChevronRight, Loader, Alert
 import type { StageViewProps } from './types';
 import { assetUrl, assetVersionLabel } from './utils';
 import { uploadArtifactImage } from '@/lib/workflowApi';
+import { authenticatedFetch } from '@/lib/auth';
 import StageActions from './StageActions';
 import StageProgress from './StageProgress';
 import ImageLightbox from './ImageLightbox';
@@ -437,7 +438,7 @@ export default function ReferenceStage({ state, sessionId, onConfirm, onInterven
     setSavingIds(prev => new Set(prev).add(sceneId));
     try {
       // 调用后端 API 保存提示词
-      const response = await fetch(`/api/project/${sessionId}/artifact/reference_generation`, {
+      const response = await authenticatedFetch(`/api/project/${sessionId}/artifact/reference_generation`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({

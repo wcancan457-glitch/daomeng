@@ -13,6 +13,7 @@ if _backend_dir not in sys.path:
 
 from config import settings
 from api.logging_config import setup_concurrent_logging
+from api.security_layer import ALLOWED_ORIGINS, SecurityMiddleware
 
 setup_concurrent_logging()
 
@@ -27,6 +28,7 @@ from api.routers import (
     workflow_router,
     pipelines_router,
     configuration_router,
+    auth_router,
 )
 
 
@@ -40,14 +42,16 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="导梦", version="2.0.0", lifespan=lifespan)
 
+app.add_middleware(SecurityMiddleware)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=ALLOWED_ORIGINS,
+    allow_credentials=False,
     allow_methods=["*"],
-    allow_headers=["*"],
+    allow_headers=["Authorization", "Content-Type"],
 )
-logger.info("CORS enabled for origins: %s", ["*"])
+logger.info("CORS enabled for origins: %s", ALLOWED_ORIGINS)
 
 os.makedirs(settings.CODE_DIR, exist_ok=True)
 app.mount("/code", StaticFiles(directory=settings.CODE_DIR), name="code")
@@ -60,6 +64,7 @@ app.include_router(stages_router)
 app.include_router(sandbox_router)
 app.include_router(pipelines_router)
 app.include_router(configuration_router)
+app.include_router(auth_router)
 logger.info("API routers registered")
 
 

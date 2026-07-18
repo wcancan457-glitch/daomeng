@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { CheckCircle, Loader2, Save, Settings, XCircle } from 'lucide-react';
 import BrandHeader from '@/components/BrandHeader';
+import { authenticatedFetch } from '@/lib/auth';
 import { fetchModelGroupsByType, fetchVideoModelGroupsByAbility } from '@/lib/modelRegistry';
 import {
   VIDEO_RATIOS,
@@ -200,7 +201,7 @@ export default function SettingsPage() {
       setLoading(true);
       setError('');
       try {
-        const resp = await fetch('/api/config');
+        const resp = await authenticatedFetch('/api/config');
         if (!resp.ok) throw new Error('读取配置失败');
         const data = await resp.json();
         setConfig(data.config || {});
@@ -269,7 +270,7 @@ export default function SettingsPage() {
     setMessage('');
     setError('');
     try {
-      const resp = await fetch('/api/config', {
+      const resp = await authenticatedFetch('/api/config', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ values: config }),

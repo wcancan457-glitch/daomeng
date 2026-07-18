@@ -2,10 +2,11 @@
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
-import { CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock, Hexagon, Home, Loader2, PanelLeftOpen, Repeat2, Settings, Trash2, UserRound } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock, Hexagon, Home, Loader2, PanelLeftOpen, Repeat2, Settings, Trash2, UserRound, LogOut } from 'lucide-react';
 import clsx from 'clsx';
 import { useEffect, useState, type CSSProperties } from 'react';
 import { clearTempCache, fetchPipelineTasks, fetchSandboxTasks, fetchSessions, type PipelineTask, type SandboxTask } from '@/lib/workflowApi';
+import { clearAccessToken } from '@/lib/auth';
 
 const NAV_ITEMS = [
   { href: '/', label: '导梦', icon: Home },
@@ -398,6 +399,18 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                       >
                         {clearingCache ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                         清空缓存
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          clearAccessToken();
+                          setSettingsMenuOpen(false);
+                          window.location.reload();
+                        }}
+                        className="mt-1 flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900"
+                      >
+                        <LogOut className="h-4 w-4" />
+                        ????
                       </button>
                     </div>
                   )}

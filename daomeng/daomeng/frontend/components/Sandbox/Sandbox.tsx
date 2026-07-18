@@ -7,6 +7,7 @@ import type { ModelOption, ProviderGroup } from '@/config/models';
 import BrandHeader from '@/components/BrandHeader';
 import { fetchSandboxTasks, uploadMedia } from '@/lib/workflowApi';
 import { fetchModelGroupsByType } from '@/lib/modelRegistry';
+import { authenticatedFetch } from '@/lib/auth';
 
 // 辅助函数：将相对路径转换为完整 URL
 const toMediaUrl = (path: string) => {
@@ -339,7 +340,7 @@ export default function SandboxPage() {
   // 获取历史记录
   const fetchHistory = async () => {
     try {
-      const resp = await fetch('/api/sandbox/history');
+      const resp = await authenticatedFetch('/api/sandbox/history');
       const data = await readJsonResponse(resp);
       if (data.success) {
         setHistory(data.records);
@@ -438,7 +439,7 @@ export default function SandboxPage() {
   const deleteRecord = async (id: string) => {
     setDeleting(id);
     try {
-      const resp = await fetch(`/api/sandbox/history/${id}`, { method: 'DELETE' });
+      const resp = await authenticatedFetch(`/api/sandbox/history/${id}`, { method: 'DELETE' });
       const data = await readJsonResponse(resp);
       if (data.success) {
         setHistory(history.filter(r => r.id !== id));
@@ -523,7 +524,7 @@ export default function SandboxPage() {
           break;
       }
 
-      const response = await fetch(apiUrl, {
+      const response = await authenticatedFetch(apiUrl, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),

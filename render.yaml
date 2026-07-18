@@ -12,6 +12,16 @@ services:
         value: 8000
       - key: LOG_LEVEL
         value: INFO
+      - key: AUTH_REQUIRED
+        value: "true"
+      - key: ALLOWED_ORIGINS
+        value: https://daomeng.vercel.app
+      - key: AUTH_TOKEN_TTL_SECONDS
+        value: "86400"
+      - key: API_RATE_LIMIT_PER_MINUTE
+        value: "60"
+      - key: MAX_UPLOAD_BYTES
+        value: "26214400"
       - key: SILICONFLOW_API_KEY
         sync: false
       - key: DASHSCOPE_API_KEY

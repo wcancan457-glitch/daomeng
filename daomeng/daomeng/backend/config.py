@@ -347,7 +347,7 @@ class Config:
 
     @classmethod
     def update_config(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        clean = save_config(values)
+        clean = _apply_env_overrides(save_config(values))
         cls.CONFIG = clean
 
         cls.HOST = _get(clean, "server.host")

@@ -6,6 +6,7 @@ import type { StageViewProps } from './types';
 import { assetUrl } from './utils';
 import StageActions from './StageActions';
 import StageProgress from './StageProgress';
+import { authenticatedFetch } from '@/lib/auth';
 
 /* ─── 类型 ─── */
 interface ClipItem {
@@ -427,7 +428,7 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
 
     setSavingIds(prev => new Set(prev).add(clipId));
     try {
-      const response = await fetch(`/api/project/${sessionId}/artifact/video_generation`, {
+      const response = await authenticatedFetch(`/api/project/${sessionId}/artifact/video_generation`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
