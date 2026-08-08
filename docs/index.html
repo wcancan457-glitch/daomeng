@@ -1,0 +1,506 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="description" content="导梦 AI 视频创作项目的六阶段 Agent 工作流与系统架构">
+  <title>导梦｜六阶段 Agent 架构工作台</title>
+  <style>
+    :root{
+      --paper:#f3efe6;--paper-2:#e9e3d7;--ink:#171714;--muted:#68645c;--line:#c9c1b4;
+      --studio:#141412;--studio-2:#1d1c19;--studio-3:#292722;--screen:#ebe5d9;
+      --red:#d44837;--amber:#dfa526;--green:#4e826b;--white:#fffdf7;
+      --serif:"Songti SC","STSong","SimSun","Noto Serif CJK SC",serif;
+      --sans:"Microsoft YaHei","PingFang SC","Noto Sans CJK SC",sans-serif;
+      --mono:"Cascadia Mono","SFMono-Regular",Consolas,monospace;
+      --radius:8px;--max:1440px;--bar:58px;
+    }
+    *{box-sizing:border-box}
+    html{scroll-behavior:smooth}
+    body{margin:0;color:var(--ink);background:var(--paper);font-family:var(--sans);font-size:15px;line-height:1.7}
+    button{font:inherit}
+    button:focus-visible,a:focus-visible{outline:3px solid var(--amber);outline-offset:3px}
+    ::selection{color:var(--white);background:var(--red)}
+    .skip{position:fixed;z-index:999;left:12px;top:-60px;padding:8px 12px;color:#fff;background:#000}
+    .skip:focus{top:8px}
+    .topbar{height:var(--bar);position:sticky;z-index:100;top:0;color:#e9e4d9;background:var(--studio);border-bottom:1px solid #38352f}
+    .topbar-inner{width:min(var(--max),100%);height:100%;margin:auto;padding:0 22px;display:grid;grid-template-columns:1fr auto 1fr;align-items:center}
+    .brand{display:flex;align-items:baseline;gap:12px;color:inherit;text-decoration:none}
+    .brand strong{font-family:var(--serif);font-size:27px;font-weight:600}
+    .brand span,.topbar-title{color:#918c81;font-family:var(--mono);font-size:10px;letter-spacing:.04em}
+    .topbar-title{justify-self:center}
+    .timecode{justify-self:end;display:flex;align-items:center;gap:9px;color:#d2a842;font-family:var(--mono);font-size:10px;font-variant-numeric:tabular-nums}
+    .rec{width:7px;height:7px;background:var(--red);border-radius:50%}
+    .hero{width:min(var(--max),100%);margin:auto;padding:42px 24px 30px;display:grid;grid-template-columns:minmax(0,1.1fr) minmax(330px,.9fr);gap:58px;align-items:end}
+    h1,h2,h3,p{margin-top:0}
+    h1{margin-bottom:0;font-family:var(--serif);font-size:clamp(52px,6vw,88px);font-weight:600;line-height:.95;letter-spacing:-.03em}
+    h1 span{display:block;margin-top:20px;font-size:clamp(24px,3vw,42px);line-height:1.18;letter-spacing:-.025em}
+    .hero-copy{max-width:52ch;margin:0;color:#47443f;font-size:16px}
+    .hero-copy strong{color:var(--ink)}
+    .truth-line{margin-top:18px;padding-top:14px;border-top:1px solid var(--line);color:var(--muted);font-size:12px}
+    .workspace{width:min(var(--max),calc(100% - 32px));min-height:780px;margin:0 auto 64px;display:grid;grid-template-columns:258px minmax(0,1fr);overflow:hidden;background:var(--studio);border-radius:var(--radius);box-shadow:0 24px 60px rgba(36,30,22,.16)}
+    .directory{min-width:0;padding:18px 14px 16px;display:flex;flex-direction:column;color:#ddd7cc;background:var(--studio);border-right:1px solid #3b3832}
+    .directory-head{padding:4px 8px 15px;border-bottom:1px solid #34312c}
+    .directory-head b{display:block;font-family:var(--serif);font-size:19px;font-weight:600}
+    .directory-head span{color:#827c71;font-family:var(--mono);font-size:9px}
+    .nav-group{margin-top:17px}
+    .nav-label{margin:0 8px 7px;color:#6f6a61;font-family:var(--mono);font-size:9px;letter-spacing:.08em}
+    .nav-button{width:100%;min-height:44px;padding:9px 10px;display:grid;grid-template-columns:22px 1fr auto;gap:8px;align-items:center;border:0;color:#aaa398;background:transparent;text-align:left;cursor:pointer}
+    .nav-button:hover{color:#fff;background:#22211e}
+    .nav-button[aria-selected=true]{color:#fff;background:#2b2924}
+    .nav-button[aria-selected=true]::before{content:"";position:absolute}
+    .nav-button .index{color:#777168;font-family:var(--mono);font-size:10px}
+    .nav-button[aria-selected=true] .index{color:var(--amber)}
+    .nav-button .name{min-width:0;font-size:13px}
+    .nav-button .mark{width:6px;height:6px;background:transparent}
+    .nav-button[aria-selected=true] .mark{background:var(--red)}
+    .directory-foot{margin-top:auto;padding:16px 8px 0;border-top:1px solid #34312c;color:#777168;font-size:10px;line-height:1.6}
+    .stage{min-width:0;background:var(--paper-2)}
+    .stage-chrome{height:44px;padding:0 18px;display:flex;align-items:center;justify-content:space-between;color:#979186;background:#0d0d0c;border-bottom:1px solid #3a3731;font-family:var(--mono);font-size:9px}
+    .chrome-dots{display:flex;gap:6px}.chrome-dots i{width:7px;height:7px;border-radius:50%;background:#5d5951}.chrome-dots i:first-child{background:var(--red)}.chrome-dots i:nth-child(2){background:var(--amber)}
+    .view{display:none;min-height:736px}.view.active{display:block}
+    .view-head{padding:30px 34px 22px;display:flex;justify-content:space-between;gap:32px;border-bottom:1px solid var(--line)}
+    .view-head h2{margin:0;font-family:var(--serif);font-size:clamp(29px,3.2vw,46px);font-weight:600;line-height:1.14;letter-spacing:-.025em}
+    .view-head p{max-width:52ch;margin:7px 0 0;color:var(--muted);font-size:13px}
+    .state{flex:none;align-self:flex-start;padding:5px 8px;color:#5d4a1d;background:#e8d8ad;border:1px solid #c9ae69;font-family:var(--mono);font-size:9px}
+    .overview-body{padding:28px 34px 34px}
+    .overview-monitor{display:grid;grid-template-columns:230px minmax(0,1fr);overflow:hidden;background:var(--studio-2);border-radius:6px}
+    .brief-rail{padding:22px;color:#ded8cc;border-right:1px solid #3d3933}
+    .brief-rail h3{margin-bottom:12px;color:var(--amber);font-family:var(--mono);font-size:10px;font-weight:500}
+    .idea{padding:13px;color:#eee8dc;background:#171613;border:1px solid #49453e;font-family:var(--serif);font-size:15px;line-height:1.8}
+    .brief-fields{margin:16px 0 0;padding:0;list-style:none}
+    .brief-fields li{padding:8px 0;display:grid;grid-template-columns:70px 1fr;gap:8px;border-bottom:1px solid #38352f;font-size:11px}
+    .brief-fields span{color:#858075}.brief-fields b{font-weight:500}
+    .monitor-main{min-width:0}
+    .monitor-title{height:42px;padding:0 16px;display:flex;align-items:center;justify-content:space-between;color:#a49e92;background:#11110f;border-bottom:1px solid #3a3731;font-family:var(--mono);font-size:9px}
+    .stage-gallery{min-height:330px;padding:20px;display:grid;grid-template-columns:repeat(6,1fr);gap:1px;background:#38352f}
+    .stage-frame{min-width:0;padding:12px 9px 10px;display:flex;flex-direction:column;background:var(--screen)}
+    .stage-frame b{font-family:var(--serif);font-size:15px}
+    .stage-frame small{color:#746e64;font-size:9px}
+    .frame-art{min-height:190px;margin-top:10px;position:relative;overflow:hidden;background:#bdb8ad;border:1px solid #958e83}
+    .frame-art.script{background:repeating-linear-gradient(to bottom,#eee9df 0,#eee9df 18px,#b7b0a4 19px,#eee9df 20px)}
+    .frame-art.person::before{content:"";position:absolute;width:35%;aspect-ratio:1;left:33%;top:18%;border-radius:50%;background:#494b47}.frame-art.person::after{content:"";position:absolute;width:58%;height:58%;left:21%;bottom:-10%;background:#5d5f5a;border-radius:48% 48% 0 0}
+    .frame-art.shots{background:linear-gradient(90deg,transparent 49%,#8b857b 50%,transparent 51%),linear-gradient(transparent 49%,#8b857b 50%,transparent 51%),#d3cec4;background-size:50% 50%}
+    .frame-art.image{background:linear-gradient(155deg,#777e79 0 45%,#3b403d 46% 63%,#a99476 64%)}
+    .frame-art.video{background:#4c5552}.frame-art.video::before{content:"";position:absolute;inset:18% 30%;background:linear-gradient(90deg,#1e211f 0 35%,transparent 36%),linear-gradient(#9da49f,#3d4542)}
+    .frame-art.final{background:radial-gradient(circle at 50% 44%,#aaa89d 0 9%,#4f5551 10% 26%,#212421 55%,#0f100f 78%)}
+    .generated-visual,.generated-output{background-color:#111;background-repeat:no-repeat;background-position:center;background-size:cover}
+    .visual-0{background-image:url("assets/stages/01-script.png")}.visual-1{background-image:url("assets/stages/02-character-setting.png")}.visual-2{background-image:url("assets/stages/03-storyboard.png")}.visual-3{background-image:url("assets/stages/04-reference.png")}.visual-4{background-image:url("assets/stages/05-video.png")}.visual-5{background-image:url("assets/stages/06-final.png")}
+    .artifact-content{display:grid;grid-template-columns:minmax(210px,.75fr) minmax(280px,1.25fr);gap:20px;align-items:start}
+    .generated-output{width:100%;max-width:360px;aspect-ratio:2/3;justify-self:center;border:7px solid #f8f4ea;box-shadow:0 0 0 1px #938d82}
+    .flow-strip{padding:15px 18px;display:grid;grid-template-columns:repeat(6,1fr);background:#0f0f0d;border-top:1px solid #3c3932}
+    .flow-node{min-width:0;position:relative;padding:8px 10px;color:#9d978c;border-right:1px solid #3a3731;cursor:pointer}
+    .flow-node:last-child{border-right:0}.flow-node:hover{color:#fff}.flow-node b{display:block;font-size:11px}.flow-node span{font-family:var(--mono);font-size:8px}
+    .flow-node:not(:last-child)::after{content:"";position:absolute;z-index:2;right:-4px;top:50%;width:7px;height:7px;border-top:1px solid #8d867a;border-right:1px solid #8d867a;transform:translateY(-50%) rotate(45deg)}
+    .architecture-summary{margin-top:26px;display:grid;grid-template-columns:repeat(5,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+    .summary-layer{padding:15px 12px;border-right:1px solid var(--line)}.summary-layer:last-child{border-right:0}
+    .summary-layer b{display:block;font-size:12px}.summary-layer span{display:block;margin-top:4px;color:var(--muted);font-size:10px}
+    .agent-body{padding:24px 34px 34px}
+    .agent-monitor{display:grid;grid-template-columns:310px minmax(0,1fr);overflow:hidden;background:var(--studio-2);border-radius:6px}
+    .agent-input{padding:22px;color:#ddd7cb;border-right:1px solid #3c3933}
+    .agent-input h3,.artifact h3,.detail-section h3{margin-bottom:13px;font-size:13px}
+    .agent-input h3{color:var(--amber);font-family:var(--mono);font-size:10px;font-weight:500}
+    .input-list{margin:0;padding:0;list-style:none}
+    .input-list li{padding:9px 0;border-bottom:1px solid #39362f;font-size:12px}
+    .input-list code{display:block;color:#8e887d;font-family:var(--mono);font-size:9px}
+    .prompt-fields{margin-top:20px;padding-top:15px;border-top:1px solid #4b463e}
+    .prompt-fields b{display:block;margin-bottom:8px;color:#eee7da;font-size:11px}
+    .prompt-fields span{display:inline-block;margin:0 5px 6px 0;padding:3px 5px;color:#b9b2a6;background:#282621;font-family:var(--mono);font-size:9px}
+    .gap-note{margin-top:16px;padding:10px;color:#d6c28a;background:#29251c;border:1px solid #5e5032;font-size:10px;line-height:1.55}
+    .artifact{min-width:0;padding:22px;background:#1a1917}
+    .artifact-top{display:flex;justify-content:space-between;gap:18px;color:#aaa499;font-family:var(--mono);font-size:9px}
+    .artifact-screen{min-height:286px;margin-top:13px;padding:20px;display:flex;align-items:stretch;color:var(--ink);background:var(--screen);border:1px solid #5e594f}
+    .artifact-copy{width:100%}
+    .artifact-copy h4{margin:0 0 16px;font-family:var(--serif);font-size:25px;font-weight:600}
+    .output-list{margin:0;padding:0;list-style:none}
+    .output-list li{padding:9px 0;display:grid;grid-template-columns:120px 1fr;gap:12px;border-bottom:1px solid #ccc4b7;font-size:12px}
+    .output-list code{color:#6d4e16;font-family:var(--mono);font-size:10px}
+    .artifact-visual{width:100%;display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+    .visual-cell{min-height:190px;position:relative;overflow:hidden;background:#a7a49b;border:7px solid #f8f4ea;box-shadow:0 0 0 1px #938d82}
+    .visual-cell::before{content:"";position:absolute;width:32%;aspect-ratio:1;left:34%;top:18%;border-radius:50%;background:#4a4d49}
+    .visual-cell::after{content:"";position:absolute;width:60%;height:55%;left:20%;bottom:-10%;border-radius:50% 50% 0 0;background:#60645f}
+    .visual-cell.shot{border-width:1px;background:linear-gradient(150deg,#b8b5aa 0 45%,#5f655f 46% 63%,#9f8f76 64%)}.visual-cell.shot::before,.visual-cell.shot::after{display:none}
+    .video-cell{min-height:238px;position:relative;overflow:hidden;background:radial-gradient(circle at 50% 38%,#9a9d94 0 7%,#454a46 8% 25%,#181a18 55%,#0e0f0e 75%)}.video-cell::after{content:"";position:absolute;left:48%;bottom:0;width:5%;height:54%;background:#252825}
+    .detail-grid{margin-top:22px;display:grid;grid-template-columns:minmax(0,1.45fr) minmax(270px,.55fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+    .detail-section{padding:22px 0}.detail-section:first-child{padding-right:26px;border-right:1px solid var(--line)}.detail-section:last-child{padding-left:26px}
+    .run-list{margin:0;padding:0;list-style:none;counter-reset:run}
+    .run-list li{counter-increment:run;padding:10px 0;display:grid;grid-template-columns:30px 130px 1fr;gap:10px;border-bottom:1px solid var(--line);font-size:12px}
+    .run-list li::before{content:counter(run,decimal-leading-zero);color:var(--red);font-family:var(--mono);font-size:10px}
+    .run-list b{font-size:12px}.run-list span{color:var(--muted)}
+    .control-block{padding:11px 0;border-bottom:1px solid var(--line)}
+    .control-block b{display:block;font-size:11px}.control-block p{margin:4px 0 0;color:var(--muted);font-size:11px}
+    .handoff-bar{margin-top:20px;display:grid;grid-template-columns:1fr 28px 1fr 28px 1fr;align-items:center}
+    .handoff-node{min-height:62px;padding:10px;background:#e1d9ca;border:1px solid #bdb3a4}
+    .handoff-node.current{color:#fff;background:#292722;border-color:#292722}
+    .handoff-node span{display:block;color:#756f65;font-family:var(--mono);font-size:8px}.handoff-node.current span{color:#a9a295}
+    .handoff-node b{display:block;margin-top:4px;font-size:11px}
+    .connector{height:1px;background:#8f887c}
+    .system-body,.data-body,.role-body{padding:26px 34px 36px}
+    .layer-stack{background:var(--studio-2);border-radius:6px;overflow:hidden}
+    .layer{display:grid;grid-template-columns:150px minmax(0,1fr) 230px;border-bottom:1px solid #3c3933;color:#e6e0d5}
+    .layer:last-child{border-bottom:0}.layer-name{padding:18px;color:var(--amber);font-size:12px}.layer-nodes{padding:13px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;border-left:1px solid #3c3933;border-right:1px solid #3c3933}.layer-nodes span{padding:8px;background:#282621;font-size:11px}.layer-purpose{padding:16px;color:#999286;font-size:10px}
+    .architecture-note{margin-top:18px;padding:15px 0;display:grid;grid-template-columns:repeat(3,1fr);border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+    .architecture-note div{padding:0 15px;border-right:1px solid var(--line)}.architecture-note div:last-child{border-right:0}.architecture-note b{display:block;font-size:12px}.architecture-note p{margin:5px 0 0;color:var(--muted);font-size:11px}
+    .data-chain{display:grid;grid-template-columns:repeat(5,1fr);background:#ddd5c7;border:1px solid #bdb4a6}
+    .data-node{min-height:126px;padding:16px;position:relative;border-right:1px solid #bdb4a6}.data-node:last-child{border-right:0}.data-node:not(:last-child)::after{content:"";position:absolute;z-index:2;right:-5px;top:50%;width:8px;height:8px;background:#ddd5c7;border-top:1px solid #8e8679;border-right:1px solid #8e8679;transform:translateY(-50%) rotate(45deg)}
+    .data-node code{color:#9a4b34;font-family:var(--mono);font-size:9px}.data-node b{display:block;margin-top:8px;font-size:13px}.data-node p{margin:5px 0 0;color:var(--muted);font-size:10px}
+    .rule-table{width:100%;margin-top:22px;border-collapse:collapse;font-size:11px}.rule-table th,.rule-table td{padding:11px;text-align:left;border-bottom:1px solid var(--line)}.rule-table th{color:var(--muted);font-weight:500}.rule-table code{font-family:var(--mono);font-size:10px}
+    .role-grid{display:grid;grid-template-columns:1fr 1fr;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
+    .role-col{padding:22px}.role-col:first-child{border-right:1px solid var(--line)}.role-col h3{font-family:var(--serif);font-size:24px}.role-col ul{margin:0;padding-left:18px}.role-col li{margin:8px 0;font-size:12px}
+    .truth-box{margin-top:22px;padding:18px;color:#ddd7cb;background:var(--studio-2);border-radius:6px}.truth-box b{color:var(--amber)}.truth-box p{margin:7px 0 0;font-size:12px}
+    .statusbar{height:36px;padding:0 16px;display:flex;align-items:center;justify-content:space-between;color:#7e786e;background:#0e0e0c;border-top:1px solid #39362f;font-family:var(--mono);font-size:8px}
+    .statusbar b{color:#b49a58;font-weight:500}
+    @media(max-width:1050px){
+      .hero{grid-template-columns:1fr;gap:22px}.hero-copy{max-width:72ch}
+      .workspace{grid-template-columns:218px minmax(0,1fr)}
+      .overview-monitor,.agent-monitor{grid-template-columns:1fr}.brief-rail,.agent-input{border-right:0;border-bottom:1px solid #3d3933}
+      .brief-fields{display:grid;grid-template-columns:1fr 1fr;gap:0 18px}
+      .stage-gallery{overflow-x:auto;grid-template-columns:repeat(6,145px)}
+      .layer{grid-template-columns:120px minmax(0,1fr)}.layer-purpose{grid-column:2;border-left:1px solid #3c3933;padding-top:0}
+    }
+    @media(max-width:760px){
+      :root{--bar:54px}
+      .topbar-inner{padding:0 14px;grid-template-columns:1fr auto}.topbar-title{display:none}.brand span{display:none}
+      .hero{padding:30px 16px 24px}.hero h1{font-size:54px}.hero h1 span{font-size:25px}
+      .workspace{width:100%;margin-bottom:0;display:block;border-radius:0;box-shadow:none}
+      .directory{position:sticky;z-index:80;top:var(--bar);padding:0;display:block;overflow-x:auto;border-right:0;border-bottom:1px solid #3b3832}
+      .directory-head,.nav-label,.directory-foot{display:none}.directory nav{display:flex;width:max-content}
+      .nav-group{margin:0;display:flex}.nav-button{width:auto;min-width:116px;min-height:52px;padding:8px 10px;grid-template-columns:20px 1fr 6px;border-right:1px solid #34312c}
+      .view{min-height:0}.view-head{padding:25px 16px 19px}.view-head{display:block}.state{display:inline-block;margin-top:12px}
+      .overview-body,.agent-body,.system-body,.data-body,.role-body{padding:18px 16px 28px}
+      .brief-fields{display:block}.stage-gallery{min-height:290px;padding:14px;grid-template-columns:repeat(6,138px)}.frame-art{min-height:160px}
+      .flow-strip{overflow-x:auto;grid-template-columns:repeat(6,128px)}
+      .architecture-summary{overflow-x:auto;grid-template-columns:repeat(5,155px)}
+      .agent-monitor{display:block}.artifact-screen{min-height:250px}.artifact-content{grid-template-columns:1fr}.generated-output{width:min(100%,340px)}.agent-input{padding:18px}.artifact{padding:18px}
+      .detail-grid{grid-template-columns:1fr}.detail-section:first-child{padding-right:0;border-right:0}.detail-section:last-child{padding-left:0;border-top:1px solid var(--line)}
+      .run-list li{grid-template-columns:28px 105px 1fr}
+      .handoff-bar{grid-template-columns:1fr}.connector{width:1px;height:18px;margin:auto}
+      .layer{grid-template-columns:1fr}.layer-name{padding-bottom:8px}.layer-nodes{grid-template-columns:1fr 1fr;border-right:0}.layer-purpose{grid-column:auto;border-left:0;padding-top:12px}
+      .architecture-note{grid-template-columns:1fr}.architecture-note div{padding:13px 0;border-right:0;border-bottom:1px solid var(--line)}.architecture-note div:last-child{border-bottom:0}
+      .data-chain{overflow-x:auto;grid-template-columns:repeat(5,170px)}
+      .role-grid{grid-template-columns:1fr}.role-col:first-child{border-right:0;border-bottom:1px solid var(--line)}
+      .statusbar{display:none}
+    }
+    @media(max-width:430px){
+      .hero h1{font-size:47px}.hero h1 span{font-size:22px}
+      .timecode span:last-child{display:none}
+      .view-head h2{font-size:32px}.artifact-visual{grid-template-columns:repeat(3,145px);overflow-x:auto}
+      .output-list li{grid-template-columns:100px 1fr}.run-list li{grid-template-columns:26px 1fr}.run-list span{grid-column:2}
+    }
+    @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  </style>
+</head>
+<body>
+  <!--
+    DIRECTION CONTRACT
+    THESIS: 用“剪辑室监看工作台”解释导梦，而非把架构拆成一条漫长报告。
+    OWN-WORLD: 暖白工作样片、炭黑剪辑台、场记红播放状态、琥珀确认色、宋体标题。
+    STORY: 左侧目录选择问题，右侧监看区只呈现当前架构或 Agent；六阶段用同一信息模板。
+    FIRST VIEWPORT: 标题 + 左侧目录 + 监看区，B“监看窗主导”直接成为页面骨架。
+    FORM: 桌面固定目录，移动横向目录；单一主面板，禁止重复长滚动章节。
+    FINISH: 清晰、可讲述、可交互，事实与优化建议严格分层。
+  -->
+  <a class="skip" href="#main">跳到主要内容</a>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <a class="brand" href="#" aria-label="返回导梦架构总览"><strong>导梦</strong><span>ARCHITECTURE WORKPRINT</span></a>
+      <span class="topbar-title">六阶段 Agent · 集中式工作流</span>
+      <span class="timecode"><i class="rec"></i><span id="clock">00:00:00:00</span><span>REC</span></span>
+    </div>
+  </header>
+
+  <section class="hero">
+    <h1>导梦<span>把一句灵感，导成一条可确认的视频生产线</span></h1>
+    <div>
+      <p class="hero-copy">面向缺少编剧与导演能力的普通创作者，<strong>WorkflowEngine 按顺序调度六个阶段 Agent</strong>，将创意转换成剧本、角色与场景、分镜、参考图、视频片段和最终成片。</p>
+      <p class="truth-line">当前实现：集中式顺序编排、共享 Session、阶段级人工确认、资产版本保留与局部重生成。</p>
+    </div>
+  </section>
+
+  <main class="workspace" id="main">
+    <aside class="directory" aria-label="架构目录">
+      <div class="directory-head"><b>架构目录</b><span>SELECT A VIEW TO MONITOR</span></div>
+      <nav id="directoryNav">
+        <div class="nav-group">
+          <p class="nav-label">PROJECT</p>
+          <button class="nav-button" type="button" data-view="overview" aria-selected="true"><span class="index">00</span><span class="name">工作流总览</span><i class="mark"></i></button>
+          <button class="nav-button" type="button" data-view="system" aria-selected="false"><span class="index">01</span><span class="name">系统架构</span><i class="mark"></i></button>
+        </div>
+        <div class="nav-group" id="agentNav">
+          <p class="nav-label">SIX AGENTS</p>
+        </div>
+        <div class="nav-group">
+          <p class="nav-label">GOVERNANCE</p>
+          <button class="nav-button" type="button" data-view="data" aria-selected="false"><span class="index">08</span><span class="name">数据与控制</span><i class="mark"></i></button>
+          <button class="nav-button" type="button" data-view="role" aria-selected="false"><span class="index">09</span><span class="name">职责与边界</span><i class="mark"></i></button>
+        </div>
+      </nav>
+      <div class="directory-foot">点击目录切换右侧内容。<br>Agent 之间通过结构化资产交接。</div>
+    </aside>
+
+    <section class="stage">
+      <div class="stage-chrome"><div class="chrome-dots" aria-hidden="true"><i></i><i></i><i></i></div><span id="chromeTitle">MONITOR / 工作流总览</span><span>MASTER · 16:9</span></div>
+
+      <article class="view active" id="view-overview" data-title="工作流总览">
+        <header class="view-head"><div><h2>一句灵感，经过六次明确交接</h2><p>每个 Agent 只解决一个阶段问题。用户确认当前产物后，WorkflowEngine 才把确定版本交给下游。</p></div><span class="state">CURRENT IMPLEMENTATION</span></header>
+        <div class="overview-body">
+          <div class="overview-monitor">
+            <aside class="brief-rail">
+              <h3>STRUCTURED INPUT / 创作配置</h3>
+              <div class="idea">雨夜里，一个失眠的女孩在旧影院遇见未来的自己。</div>
+              <ul class="brief-fields"><li><span>故事风格</span><b>复古电影</b></li><li><span>剧集数量</span><b>4 集</b></li><li><span>视频画幅</span><b>16:9</b></li><li><span>运行方式</span><b>阶段确认</b></li></ul>
+            </aside>
+            <div class="monitor-main">
+              <div class="monitor-title"><span>PROGRAM / 六阶段生产链</span><span>00:01:58:00</span></div>
+              <div class="stage-gallery">
+                <div class="stage-frame"><b>剧本</b><small>ScriptWriter</small><div class="frame-art generated-visual visual-0" role="img" aria-label="剧本纸张与场记板"></div></div>
+                <div class="stage-frame"><b>角色场景</b><small>CharacterDesigner</small><div class="frame-art generated-visual visual-1" role="img" aria-label="女主角设定与旧影院场景设计"></div></div>
+                <div class="stage-frame"><b>分镜</b><small>Storyboard</small><div class="frame-art generated-visual visual-2" role="img" aria-label="雨夜旧影院分镜板"></div></div>
+                <div class="stage-frame"><b>参考图</b><small>ReferenceGenerator</small><div class="frame-art generated-visual visual-3" role="img" aria-label="女主角站在旧影院门厅的参考画面"></div></div>
+                <div class="stage-frame"><b>视频片段</b><small>VideoDirector</small><div class="frame-art generated-visual visual-4" role="img" aria-label="女主角穿过放映厅的视频帧序列"></div></div>
+                <div class="stage-frame"><b>最终成片</b><small>VideoEditor</small><div class="frame-art generated-visual visual-5" role="img" aria-label="女主角与未来自己在放映机前相遇的成片画面"></div></div>
+              </div>
+              <div class="flow-strip" id="overviewFlow"></div>
+            </div>
+          </div>
+          <div class="architecture-summary">
+            <div class="summary-layer"><b>体验层</b><span>输入、预览、编辑、确认</span></div>
+            <div class="summary-layer"><b>接口层</b><span>Workflow / Stage / Artifact</span></div>
+            <div class="summary-layer"><b>编排层</b><span>WorkflowEngine + 状态机</span></div>
+            <div class="summary-layer"><b>Agent 层</b><span>六个单职责阶段 Agent</span></div>
+            <div class="summary-layer"><b>资产层</b><span>Session、版本、文件和配置</span></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="view" id="view-agent" data-title="Agent 运行结构">
+        <header class="view-head"><div><h2 id="agentTitle"></h2><p id="agentSummary"></p></div><span class="state" id="agentClass"></span></header>
+        <div class="agent-body" id="agentBody"></div>
+      </article>
+
+      <article class="view" id="view-system" data-title="系统架构">
+        <header class="view-head"><div><h2>一个编排器，管理六个阶段 Agent</h2><p>WorkflowEngine 维护阶段顺序和共享状态。Agent 从 Session 读取上游资产，执行后写回结构化结果，再等待用户确认。</p></div><span class="state">CENTRALIZED ORCHESTRATION</span></header>
+        <div class="system-body">
+          <div class="layer-stack">
+            <div class="layer"><b class="layer-name">体验层</b><div class="layer-nodes"><span>创意与配置输入</span><span>阶段工作台</span><span>版本选择与进度</span></div><span class="layer-purpose">让用户查看、修改、选择和继续。</span></div>
+            <div class="layer"><b class="layer-name">接口层</b><div class="layer-nodes"><span>Workflow API</span><span>Stage API</span><span>Artifact API</span></div><span class="layer-purpose">创建工作流、执行阶段、读写产物。</span></div>
+            <div class="layer"><b class="layer-name">编排层</b><div class="layer-nodes"><span>WorkflowEngine</span><span>阶段状态机</span><span>跨阶段资产同步</span></div><span class="layer-purpose">控制顺序、状态、停止和继续。</span></div>
+            <div class="layer"><b class="layer-name">Agent 层</b><div class="layer-nodes"><span>文本 Agent × 2</span><span>媒体 Agent × 3</span><span>后期 Agent × 1</span></div><span class="layer-purpose">六个 Agent 各自执行一个清晰阶段。</span></div>
+            <div class="layer"><b class="layer-name">模型适配层</b><div class="layer-nodes"><span>LLM Adapter</span><span>Image Adapter</span><span>Video Adapter</span></div><span class="layer-purpose">屏蔽不同模型服务的调用差异。</span></div>
+            <div class="layer"><b class="layer-name">资产与状态层</b><div class="layer-nodes"><span>Session / WorkflowState</span><span>Versions / Selected</span><span>Files / Config</span></div><span class="layer-purpose">保留产物版本、选择关系和文件路径。</span></div>
+          </div>
+          <div class="architecture-note">
+            <div><b>Agent 不直接协商</b><p>所有阶段由 WorkflowEngine 顺序调度，通过 Session 交接数据。</p></div>
+            <div><b>同一时间一个主阶段</b><p>减少状态竞争，停止、失败和继续都能定位到具体阶段。</p></div>
+            <div><b>用户确认决定下游输入</b><p>文本用编辑控制，媒体用 versions 与 selected 控制。</p></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="view" id="view-data" data-title="数据与控制">
+        <header class="view-head"><div><h2>同一个 segment_id，串起一段视频的全部资产</h2><p>分镜、参考图和视频片段保持相同标识；重做某个片段时，系统能准确更新关联资产并保留其他内容。</p></div><span class="state">SESSION AS SOURCE OF TRUTH</span></header>
+        <div class="data-body">
+          <div class="data-chain">
+            <div class="data-node"><code>episode</code><b>分集剧本</b><p>人物、场景、动作与台词。</p></div>
+            <div class="data-node"><code>segment_id</code><b>分镜片段</b><p>镜头、时长和提示词。</p></div>
+            <div class="data-node"><code>scene</code><b>参考图版本</b><p>versions[] 与 selected。</p></div>
+            <div class="data-node"><code>clip</code><b>视频片段版本</b><p>沿用 segment_id 对齐。</p></div>
+            <div class="data-node"><code>final_video</code><b>最终成片</b><p>按分集与片段顺序拼接。</p></div>
+          </div>
+          <table class="rule-table"><thead><tr><th>控制问题</th><th>保存方式</th><th>产品结果</th></tr></thead><tbody>
+            <tr><td>用户选了哪个版本</td><td><code>versions[] + selected</code></td><td>下游只读取已确认版本</td></tr>
+            <tr><td>某一张图或片段失败</td><td><code>target_id / segment_id</code></td><td>只重做目标资产</td></tr>
+            <tr><td>用户停止当前任务</td><td><code>stage status</code></td><td>保留已经完成的内容</td></tr>
+            <tr><td>分镜内容发生修改</td><td><code>cross-stage mapping</code></td><td>同步关联参考图和视频描述</td></tr>
+            <tr><td>多个阶段同时触发</td><td><code>single active stage</code></td><td>避免共享状态相互覆盖</td></tr>
+          </tbody></table>
+        </div>
+      </article>
+
+      <article class="view" id="view-role" data-title="职责与边界">
+        <header class="view-head"><div><h2>项目中的产品职责与实现边界</h2><p>这部分用于说明个人负责的产品工作、团队协作范围，以及当前能力和后续优化之间的区别。</p></div><span class="state">PROJECT TRUTH</span></header>
+        <div class="role-body">
+          <div class="role-grid">
+            <section class="role-col"><h3>个人重点负责</h3><ul><li>前端需求分析与阶段工作台交互梳理</li><li>产品定位与六阶段生产链表达</li><li>ScriptWriterAgent 的输入输出和生成流程定义</li><li>关键人工确认点、局部重生成和失败回退设计</li></ul></section>
+            <section class="role-col"><h3>团队协作完成</h3><ul><li>其他阶段 Agent 的能力实现与联调</li><li>WorkflowEngine、接口和 Session 状态管理</li><li>模型适配、媒体资产处理与本地文件管理</li><li>完整前后端工作流的整合与验证</li></ul></section>
+          </div>
+          <div class="truth-box"><b>Creative Brief 属于产品优化建议</b><p>当前产品读取用户提供的创意、风格、集数、画幅和模型配置，再由剧本 Prompt 自动补全故事。信息缺失时主动向用户追问人物外貌、场景、风格和冲突方向，是后续可增加的 Agent 交互能力。</p></div>
+        </div>
+      </article>
+
+      <footer class="statusbar"><span>DAOMENG / ARCHITECTURE WORKPRINT</span><span>WorkflowState: <b>READY FOR REVIEW</b></span><span>HUMAN-IN-THE-LOOP</span></footer>
+    </section>
+  </main>
+
+  <script>
+    const agents=[
+      {
+        n:'02',name:'剧本 Agent',className:'ScriptWriterAgent',summary:'把一句创意扩展成可拍摄的分集剧本，并提取整条视频生产线需要的角色与场景数据。',
+        inputs:[['idea / style / episodes','用户创意、风格与集数'],['language / model config','语言和 LLM 配置'],['existing episodes','智能续写时读取已有剧集']],
+        fields:['故事主题','人物关系','角色外貌','核心场景','情节冲突','影像风格','集数与篇幅'],
+        gap:'当前：Prompt 自动补全缺失信息。优化建议：生成前把人物、场景、风格和冲突整理成 Creative Brief，并向用户确认关键缺口。',
+        steps:[['生成剧本初稿','按集数、场景格式、动作和台词约束生成完整文本'],['台词评估','检查对白是否自然、人物表达是否一致'],['情节评估','检查冲突、节奏、钩子与结尾悬念'],['根据反馈修订','把两类评估意见写回修订 Prompt'],['格式与篇幅校验','检查集数、编号和单集长度，异常时调用修复'],['提取并结构化','抽取元数据、角色、场景和 episodes JSON']],
+        outputs:[['title / logline','片名与一句话故事'],['genre / mood','类型与情绪基调'],['characters[] / settings[]','全剧人物和场景'],['episodes[] / original_text','分集结构与原始文本']],
+        confirm:'编辑剧本、智能续写，或确认进入角色与场景阶段。',
+        recovery:'集数不一致或单集过长时调用修复 Prompt；JSON 提取失败时尝试规则拆分；保留可读剧本文本。',
+        upstream:'用户创意与配置',handoff:'characters[] · settings[] · episodes[]',downstream:'角色与场景 Agent',kind:'text'
+      },
+      {
+        n:'03',name:'角色与场景 Agent',className:'CharacterDesignerAgent',summary:'读取剧本中的人物和地点描述，生成可复用的视觉资产，并让用户确定后续镜头使用的版本。',
+        inputs:[['characters[] / settings[]','剧本阶段提取的角色与场景'],['style / ratio','全片风格与画幅'],['image model config','文生图、图生图模型配置'],['target asset id','局部重生成目标']],
+        fields:['年龄与外貌','服装与道具','角色视角','场景空间','光线与色调','画幅','一致性参考'],
+        gap:'角色和场景描述从剧本资产读取；用户上传的图片或已选版本会成为后续生成的确定参考。',
+        steps:[['读取资产描述','逐项获取角色、场景和全片风格'],['组装视觉 Prompt','补齐外观、服装、空间、光线和构图约束'],['按配置生成','根据模型能力并发生成候选图'],['VLM 质量检查','识别人物、构图和画面问题'],['反馈后再生成','把检查意见加入下一轮 Prompt'],['保存候选版本','写入 versions，并记录用户 selected']],
+        outputs:[['characters / settings','带视觉资产的角色和场景'],['versions[]','每项候选图片版本'],['selected','用户确认进入下游的版本'],['generation status','单项状态与预览路径']],
+        confirm:'选择候选版本、上传自己的素材，或重做单个角色与场景。',
+        recovery:'只重做指定 asset id；已完成的其他角色、场景和版本继续保留。',
+        upstream:'characters[] · settings[]',handoff:'selected character / setting assets',downstream:'分镜与参考图 Agent',kind:'visual'
+      },
+      {
+        n:'04',name:'分镜 Agent',className:'StoryboardAgent',summary:'把每集剧本拆成适合单次视频生成的 segment，并为每个 segment 设计镜头、时长和提示词。',
+        inputs:[['episodes[]','分集剧本与动作台词'],['character / setting names','角色和场景名称'],['style / duration rules','风格和目标片段时长']],
+        fields:['segment 目标','镜头景别','机位与运镜','主体动作','对白内容','片段时长','视觉与动态提示词'],
+        gap:'一个 segment 对应一次视频模型调用；segment 内可以包含多个 shot，但需要共享连续的时间与动作。',
+        steps:[['解析分集剧本','识别动作、台词、人物和地点单元'],['规划 segment 边界','按剧情动作和时长拆成可生成片段'],['设计片段内镜头','定义 shot、景别、机位、运镜和内容'],['生成两类 Prompt','分别形成 visual_prompt 与 video_prompt'],['计算时长与编号','写入 segment_id 和 total_duration'],['连续性修正','检查相邻片段站位、动作和镜头衔接']],
+        outputs:[['segment_id','跨阶段统一片段标识'],['shots[]','镜头、机位和画面内容'],['visual_prompt','参考图生成提示词'],['video_prompt / duration','动态视频提示词与时长']],
+        confirm:'编辑 segment、镜头、时长和两类提示词，再确认进入参考图阶段。',
+        recovery:'只修改目标 segment；字段变化后同步关联参考图和视频片段的描述映射。',
+        upstream:'episodes[] · visual assets',handoff:'segment_id · shots[] · prompts',downstream:'参考图 Agent',kind:'shots'
+      },
+      {
+        n:'05',name:'参考图 Agent',className:'ReferenceGeneratorAgent',summary:'组合分镜、已选角色图和场景图，为每个 segment 生成约束视频画面的首帧参考图。',
+        inputs:[['storyboard segments','分镜片段与 visual_prompt'],['selected visual assets','用户确认的角色和场景版本'],['image model config','文生图或图生图模型配置']],
+        fields:['镜头构图','人物位置','角色一致性','场景一致性','光线与色调','首帧动作状态','画幅'],
+        gap:'参考图与 segment_id 一一对齐，是分镜描述进入视频模型前的视觉确认层。',
+        steps:[['匹配片段资产','找到 segment 引用的角色和场景版本'],['构建首帧 Prompt','组合 visual_prompt、构图和一致性约束'],['选择图像调用方式','根据输入资产与模型配置组装请求'],['并发生成候选图','为多个 segment 提交生成任务'],['VLM 硬性检查','检查角色、构图和明显画面问题'],['保存与对齐','记录 versions、selected、状态和 segment_id']],
+        outputs:[['scenes[]','每个 segment 的参考图资产'],['versions[]','多版本候选图'],['selected','用户确定的首帧版本'],['segment mapping','片段标识与生成状态']],
+        confirm:'选择参考图版本、上传自己的图片，或重做单张参考图。',
+        recovery:'按 segment_id 重做单张图片；保留其他片段及其已选版本。',
+        upstream:'segment · selected visual assets',handoff:'selected reference frame',downstream:'视频 Agent',kind:'image'
+      },
+      {
+        n:'06',name:'视频 Agent',className:'VideoDirectorAgent',summary:'根据动态提示词和用户选定的参考资产，按生成模式调用视频模型，产出每个 segment 的视频片段。',
+        inputs:[['video_prompt / duration','动态描述与片段时长'],['selected references','首帧、首尾帧或角色场景参考'],['mode / video model','生成模式与视频模型配置']],
+        fields:['主体动作','镜头运动','开始状态','结束状态','时长','参考资产','生成模式'],
+        gap:'当前支持首帧、首尾帧和参考图三种输入路径；不同模式根据模型能力组装媒体参数。',
+        steps:[['读取片段配置','获取 video_prompt、duration 和 selected 资产'],['选择生成模式','首帧、首尾帧或参考图路径'],['适配模型参数','由 Video Adapter 组装对应媒体输入'],['并发提交任务','按配置生成多个 segment 视频'],['获取并保存文件','轮询任务结果并保存本地版本'],['合并局部结果','新版本写回原 clips，保留其他片段']],
+        outputs:[['clips[]','与 segment 对齐的视频片段'],['versions[]','每个片段的候选版本'],['selected','用户确认用于后期的版本'],['local path / status','本地路径与片段状态']],
+        confirm:'预览片段、选择版本，或重做单个视频 segment。',
+        recovery:'regenerate_clips 只重做指定 segment；失败片段记录状态，其他成功片段继续保留。',
+        upstream:'video_prompt · selected frame',handoff:'selected_clips',downstream:'后期 Agent',kind:'video'
+      },
+      {
+        n:'07',name:'后期 Agent',className:'VideoEditorAgent',summary:'读取用户确认的视频片段，按分集和 segment 顺序生成拼接列表，通过 FFmpeg 输出最终成片。',
+        inputs:[['selected_clips','用户确认的视频版本'],['episode / segment order','分集与片段顺序'],['local video files','已下载的本地视频文件']],
+        fields:['分集归属','片段顺序','已选版本','本地文件路径','拼接列表','输出路径'],
+        gap:'后期阶段只读取 selected_clips，避免候选版本误入最终成片。',
+        steps:[['校验已选片段','确认每个目标 segment 都有可用文件'],['按分集整理','恢复 episode 与 segment 的正确顺序'],['生成 concat 列表','为每一集写入 FFmpeg 拼接清单'],['执行视频拼接','调用 FFmpeg 生成分集成片'],['记录执行结果','保存错误、输出路径和完成状态'],['写回最终资产','更新 final_videos[] 与兼容字段 final_video']],
+        outputs:[['final_videos[]','按集输出的最终视频'],['final_video','兼容读取字段'],['output path','最终成片本地路径'],['stage status','完成或错误状态']],
+        confirm:'确认进入后期的片段版本，并查看最终成片结果。',
+        recovery:'缺少可用片段时停止当前输出并记录具体缺口；FFmpeg 失败时记录错误，避免生成不可用的假成片。',
+        upstream:'selected_clips',handoff:'final_videos[] · final_video',downstream:'用户查看与导出',kind:'final'
+      }
+    ];
+
+    const nav=document.getElementById('directoryNav');
+    const agentNav=document.getElementById('agentNav');
+    const views=[...document.querySelectorAll('.view')];
+    const chromeTitle=document.getElementById('chromeTitle');
+
+    agents.forEach((a,i)=>{
+      const button=document.createElement('button');
+      button.className='nav-button';
+      button.type='button';
+      button.dataset.view='agent';
+      button.dataset.agent=String(i);
+      button.setAttribute('aria-selected','false');
+      button.innerHTML=`<span class="index">${a.n}</span><span class="name">${a.name}</span><i class="mark"></i>`;
+      agentNav.appendChild(button);
+    });
+
+    const overviewFlow=document.getElementById('overviewFlow');
+    agents.forEach((a,i)=>{
+      const node=document.createElement('button');
+      node.className='flow-node';
+      node.type='button';
+      node.dataset.agent=String(i);
+      node.innerHTML=`<b>${a.name.replace(' Agent','')}</b><span>${a.className.replace('Agent','')}</span>`;
+      node.addEventListener('click',()=>activate('agent',i));
+      overviewFlow.appendChild(node);
+    });
+
+    function outputVisual(index,name){
+      return `<div class="generated-output visual-${index}" role="img" aria-label="${name}的生成产物示意"></div>`;
+    }
+
+    function renderAgent(index){
+      const a=agents[index];
+      document.getElementById('agentTitle').textContent=a.name;
+      document.getElementById('agentSummary').textContent=a.summary;
+      document.getElementById('agentClass').textContent=a.className;
+      const output=a.outputs.map(x=>`<li><code>${x[0]}</code><span>${x[1]}</span></li>`).join('');
+      document.getElementById('agentBody').innerHTML=`
+        <div class="agent-monitor">
+          <aside class="agent-input">
+            <h3>INPUT / 上游输入</h3>
+            <ul class="input-list">${a.inputs.map(x=>`<li>${x[1]}<code>${x[0]}</code></li>`).join('')}</ul>
+            <div class="prompt-fields"><b>Agent 需要明确的信息</b>${a.fields.map(x=>`<span>${x}</span>`).join('')}</div>
+            <div class="gap-note">${a.gap}</div>
+          </aside>
+          <section class="artifact">
+            <div class="artifact-top"><span>OUTPUT MONITOR / 阶段产物</span><span>STAGE ${a.n}</span></div>
+            <div class="artifact-screen"><div class="artifact-copy"><h4>${a.kind==='text'?'结构化剧本产物':'结构化数据 + 媒体资产'}</h4><div class="artifact-content">${outputVisual(index,a.name)}<ul class="output-list">${output}</ul></div></div></div>
+          </section>
+        </div>
+        <div class="detail-grid">
+          <section class="detail-section"><h3>Agent 内部怎样运行</h3><ol class="run-list">${a.steps.map(x=>`<li><b>${x[0]}</b><span>${x[1]}</span></li>`).join('')}</ol></section>
+          <section class="detail-section">
+            <h3>用户控制与异常处理</h3>
+            <div class="control-block"><b>用户确认</b><p>${a.confirm}</p></div>
+            <div class="control-block"><b>失败与回退</b><p>${a.recovery}</p></div>
+            <div class="control-block"><b>运行边界</b><p>当前阶段写回 Session 后等待确认；Agent 不直接调用下一个 Agent。</p></div>
+          </section>
+        </div>
+        <div class="handoff-bar" aria-label="阶段交接">
+          <div class="handoff-node"><span>UPSTREAM</span><b>${a.upstream}</b></div><i class="connector"></i>
+          <div class="handoff-node current"><span>${a.className}</span><b>${a.handoff}</b></div><i class="connector"></i>
+          <div class="handoff-node"><span>DOWNSTREAM</span><b>${a.downstream}</b></div>
+        </div>`;
+    }
+
+    function activate(view,index){
+      const target=view==='agent'?'view-agent':'view-'+view;
+      views.forEach(v=>v.classList.toggle('active',v.id===target));
+      document.querySelectorAll('.nav-button').forEach(b=>{
+        const match=view==='agent'?b.dataset.view==='agent'&&Number(b.dataset.agent)===index:b.dataset.view===view;
+        b.setAttribute('aria-selected',String(match));
+      });
+      if(view==='agent'){renderAgent(index);chromeTitle.textContent='MONITOR / '+agents[index].name}
+      else{const el=document.getElementById(target);chromeTitle.textContent='MONITOR / '+el.dataset.title}
+      document.querySelector('.stage').scrollIntoView({block:'start',behavior:matchMedia('(prefers-reduced-motion: reduce)').matches?'auto':'smooth'});
+    }
+
+    nav.addEventListener('click',e=>{
+      const button=e.target.closest('.nav-button');
+      if(!button)return;
+      activate(button.dataset.view,Number(button.dataset.agent||0));
+    });
+    nav.addEventListener('keydown',e=>{
+      if(!['ArrowDown','ArrowUp','ArrowRight','ArrowLeft'].includes(e.key))return;
+      const buttons=[...nav.querySelectorAll('.nav-button')];
+      const current=buttons.indexOf(document.activeElement);
+      if(current<0)return;
+      e.preventDefault();
+      const forward=e.key==='ArrowDown'||e.key==='ArrowRight';
+      buttons[(current+(forward?1:-1)+buttons.length)%buttons.length].focus();
+    });
+
+    let frames=0;
+    setInterval(()=>{
+      frames=(frames+1)%25;
+      const seconds=Math.floor(Date.now()/1000)%60;
+      document.getElementById('clock').textContent=`00:00:${String(seconds).padStart(2,'0')}:${String(frames).padStart(2,'0')}`;
+    },80);
+  </script>
+</body>
+</html>
