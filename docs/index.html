@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <meta name="description" content="导梦 AI 视频创作项目的六阶段 Agent 工作流与系统架构">
-  <title>导梦｜六阶段 Agent 架构工作台</title>
+  <meta name="description" content="导梦 AI 视频创作项目的面试讲解架构：六阶段 Agent 工作流、系统实现与面试弹药库">
+  <title>导梦｜面试讲解架构工作台</title>
   <style>
     :root{
       --paper:#f3efe6;--paper-2:#e9e3d7;--ink:#171714;--muted:#68645c;--line:#c9c1b4;
@@ -188,61 +188,156 @@
       .output-list li{grid-template-columns:100px 1fr}.run-list li{grid-template-columns:26px 1fr}.run-list span{grid-column:2}
     }
     @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}}
+  
+    /* ===== 新增：面试主线 / 面试弹药 视图样式 ===== */
+    .story-body{padding:26px 34px 36px}
+    .pitch{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(280px,.75fr);gap:22px}
+    .pitch-card{padding:24px;background:var(--studio-2);border-radius:6px;color:#e9e3d8}
+    .pitch-card h3{margin-bottom:14px;color:var(--amber);font-family:var(--mono);font-size:10px;font-weight:500;letter-spacing:.05em}
+    .pitch-line{font-family:var(--serif);font-size:22px;line-height:1.6;font-weight:600}
+    .pitch-line em{font-style:normal;color:var(--amber)}
+    .pitch-note{margin-top:14px;color:#a49e92;font-size:12px;line-height:1.7}
+    .keyword-box{margin-top:18px;padding-top:14px;border-top:1px solid #3d3933}
+    .keyword-box span{display:inline-block;margin:0 6px 6px 0;padding:3px 7px;color:#b9b2a6;background:#282621;font-family:var(--mono);font-size:9px;border:1px solid #4a453c}
+    .frame-order{margin:0;padding:0;list-style:none}
+    .frame-order li{padding:10px 0;display:grid;grid-template-columns:64px 1fr;gap:10px;border-bottom:1px solid #39362f;font-size:12px}
+    .frame-order code{color:#d6c28a;font-family:var(--mono);font-size:9px}
+    .frame-order span{color:#ddd7cb}
+    .pain-map{margin-top:4px;display:grid;grid-template-columns:repeat(3,1fr);gap:1px;background:#3a3731;border:1px solid #3a3731}
+    .pain-cell{padding:16px;background:var(--paper);min-height:150px}
+    .pain-cell b{display:flex;align-items:baseline;gap:8px;font-family:var(--serif);font-size:16px}
+    .pain-cell b i{font-style:normal;color:var(--red);font-family:var(--mono);font-size:9px}
+    .pain-cell p{margin:8px 0 0;color:var(--muted);font-size:11px;line-height:1.7}
+    .pain-cell .fix{display:block;margin-top:9px;color:#4e6b57;font-size:10px;line-height:1.6}
+    .pain-cell .fix::before{content:"导梦 · ";color:#4e826b;font-weight:600}
+    .opportunity{margin-top:20px;padding:16px 18px;color:#e9e3d8;background:var(--studio-2);border-left:3px solid var(--amber);border-radius:4px}
+    .opportunity b{color:var(--amber);font-size:12px}
+    .opportunity p{margin:6px 0 0;font-size:12px;line-height:1.75;color:#c9c2b6}
+    .diff-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:14px}
+    .diff-card{padding:18px;background:var(--paper);border:1px solid var(--line);border-top:3px solid var(--red)}
+    .diff-card h3{margin:0 0 6px;font-family:var(--serif);font-size:19px}
+    .diff-card .tag{display:inline-block;margin-bottom:8px;color:#9a4b34;font-family:var(--mono);font-size:9px}
+    .diff-card p{margin:6px 0 0;color:var(--muted);font-size:11px;line-height:1.7}
+    .diff-card .result{margin-top:10px;padding:9px 11px;color:#2f4d3c;background:#e4ece5;border-left:3px solid var(--green);font-size:11px}
+    .method-box{margin-top:18px;padding:16px 18px;background:var(--studio-2);border-radius:6px;color:#ddd7cb}
+    .method-box b{color:var(--amber);font-size:12px}
+    .method-box p{margin:6px 0 0;font-size:12px;line-height:1.75;color:#b9b2a6}
+    .concept-grid{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+    .concept-card{padding:16px;background:var(--studio-2);border-radius:6px;border-top:2px solid #8d867a}
+    .concept-card h3{margin:0 0 4px;color:#f1ece1;font-size:14px}
+    .concept-card .en{display:block;margin-bottom:8px;color:#8d867a;font-family:var(--mono);font-size:9px}
+    .concept-card p{margin:6px 0 0;color:#b3aca0;font-size:11px;line-height:1.7}
+    .concept-card .map{display:block;margin-top:9px;color:#d6c28a;font-size:10px;line-height:1.6}
+    .concept-card .map::before{content:"导梦对应 · ";font-weight:600}
+    .qa-list{margin:0;padding:0;list-style:none;border-top:1px solid var(--line)}
+    .qa-item{padding:18px 2px;border-bottom:1px solid var(--line)}
+    .qa-item .q{display:flex;gap:12px;font-size:14px;font-weight:600}
+    .qa-item .q i{flex:none;color:var(--red);font-family:var(--mono);font-size:10px;font-style:normal;padding-top:3px}
+    .qa-item .a{margin:9px 0 0 34px;color:var(--muted);font-size:12px;line-height:1.8}
+    .qa-item .a b{color:var(--ink)}
+    .qa-tip{margin-top:16px;padding:13px 16px;color:#5d4a1d;background:#e8d8ad;border:1px solid #c9ae69;font-size:11px;line-height:1.7}
+    @media(max-width:1050px){
+      .pitch{grid-template-columns:1fr}.pain-map{grid-template-columns:repeat(2,1fr)}
+      .diff-grid,.concept-grid{grid-template-columns:1fr}
+    }
+    @media(max-width:760px){
+      .story-body{padding:18px 16px 28px}
+      .pain-map{grid-template-columns:1fr}
+    }
+
   </style>
 </head>
 <body>
-  <!--
-    DIRECTION CONTRACT
-    THESIS: 用“剪辑室监看工作台”解释导梦，而非把架构拆成一条漫长报告。
-    OWN-WORLD: 暖白工作样片、炭黑剪辑台、场记红播放状态、琥珀确认色、宋体标题。
-    STORY: 左侧目录选择问题，右侧监看区只呈现当前架构或 Agent；六阶段用同一信息模板。
-    FIRST VIEWPORT: 标题 + 左侧目录 + 监看区，B“监看窗主导”直接成为页面骨架。
-    FORM: 桌面固定目录，移动横向目录；单一主面板，禁止重复长滚动章节。
-    FINISH: 清晰、可讲述、可交互，事实与优化建议严格分层。
-  -->
   <a class="skip" href="#main">跳到主要内容</a>
   <header class="topbar">
     <div class="topbar-inner">
-      <a class="brand" href="#" aria-label="返回导梦架构总览"><strong>导梦</strong><span>ARCHITECTURE WORKPRINT</span></a>
-      <span class="topbar-title">六阶段 Agent · 集中式工作流</span>
+      <a class="brand" href="#" aria-label="返回导梦面试讲解架构"><strong>导梦</strong><span>INTERVIEW ARCHITECTURE</span></a>
+      <span class="topbar-title">面试讲解架构 · 六阶段 Agent 工作流</span>
       <span class="timecode"><i class="rec"></i><span id="clock">00:00:00:00</span><span>REC</span></span>
     </div>
   </header>
 
   <section class="hero">
-    <h1>导梦<span>把一句灵感，导成一条可确认的视频生产线</span></h1>
+    <h1>导梦<span>面试时，按这套架构讲清你的 AI 视频创作产品</span></h1>
     <div>
-      <p class="hero-copy">面向缺少编剧与导演能力的普通创作者，<strong>WorkflowEngine 按顺序调度六个阶段 Agent</strong>，将创意转换成剧本、角色与场景、分镜、参考图、视频片段和最终成片。</p>
-      <p class="truth-line">当前实现：集中式顺序编排、共享 Session、阶段级人工确认、资产版本保留与局部重生成。</p>
+      <p class="hero-copy">面向非专业短视频与短剧创作者的 <strong>AI 视频创作工作流</strong>：把「一句话灵感」变成一条可确认、可修改、可继续生成的视频生产流水线。</p>
+      <p class="truth-line">讲解顺序：一句话定位 → 用户与痛点 → 六阶段工作流 → 每个 Agent 的输入/处理/输出/确认 → 系统实现 → 面试常问难点与概念。</p>
     </div>
   </section>
 
   <main class="workspace" id="main">
-    <aside class="directory" aria-label="架构目录">
-      <div class="directory-head"><b>架构目录</b><span>SELECT A VIEW TO MONITOR</span></div>
+    <aside class="directory" aria-label="面试讲解架构目录">
+      <div class="directory-head"><b>面试讲解架构</b><span>FOLLOW THE STORY TO TALK</span></div>
       <nav id="directoryNav">
         <div class="nav-group">
-          <p class="nav-label">PROJECT</p>
-          <button class="nav-button" type="button" data-view="overview" aria-selected="true"><span class="index">00</span><span class="name">工作流总览</span><i class="mark"></i></button>
-          <button class="nav-button" type="button" data-view="system" aria-selected="false"><span class="index">01</span><span class="name">系统架构</span><i class="mark"></i></button>
+          <p class="nav-label">STORY · 面试主线</p>
+          <button class="nav-button" type="button" data-view="opening" aria-selected="true"><span class="index">00</span><span class="name">开场 · 一句话定位</span><i class="mark"></i></button>
+          <button class="nav-button" type="button" data-view="pain" aria-selected="false"><span class="index">01</span><span class="name">用户与痛点</span><i class="mark"></i></button>
+          <button class="nav-button" type="button" data-view="overview" aria-selected="false"><span class="index">02</span><span class="name">产品方案 · 六阶段工作流</span><i class="mark"></i></button>
         </div>
         <div class="nav-group" id="agentNav">
-          <p class="nav-label">SIX AGENTS</p>
+          <p class="nav-label">SIX AGENTS · 六阶段 Agent</p>
         </div>
         <div class="nav-group">
-          <p class="nav-label">GOVERNANCE</p>
-          <button class="nav-button" type="button" data-view="data" aria-selected="false"><span class="index">08</span><span class="name">数据与控制</span><i class="mark"></i></button>
-          <button class="nav-button" type="button" data-view="role" aria-selected="false"><span class="index">09</span><span class="name">职责与边界</span><i class="mark"></i></button>
+          <p class="nav-label">SYSTEM · 系统实现</p>
+          <button class="nav-button" type="button" data-view="system" aria-selected="false"><span class="index">09</span><span class="name">系统架构</span><i class="mark"></i></button>
+          <button class="nav-button" type="button" data-view="data" aria-selected="false"><span class="index">10</span><span class="name">数据与控制</span><i class="mark"></i></button>
+        </div>
+        <div class="nav-group">
+          <p class="nav-label">INTERVIEW · 面试弹药</p>
+          <button class="nav-button" type="button" data-view="role" aria-selected="false"><span class="index">11</span><span class="name">我的角色与贡献</span><i class="mark"></i></button>
+          <button class="nav-button" type="button" data-view="difficulty" aria-selected="false"><span class="index">12</span><span class="name">难点与解决</span><i class="mark"></i></button>
+          <button class="nav-button" type="button" data-view="concepts" aria-selected="false"><span class="index">13</span><span class="name">面试概念卡</span><i class="mark"></i></button>
+          <button class="nav-button" type="button" data-view="qa" aria-selected="false"><span class="index">14</span><span class="name">高频问答</span><i class="mark"></i></button>
         </div>
       </nav>
-      <div class="directory-foot">点击目录切换右侧内容。<br>Agent 之间通过结构化资产交接。</div>
+      <div class="directory-foot">点击目录切换右侧内容。<br>先讲主线，再用 Agent 与概念卡应对追问。</div>
     </aside>
 
     <section class="stage">
-      <div class="stage-chrome"><div class="chrome-dots" aria-hidden="true"><i></i><i></i><i></i></div><span id="chromeTitle">MONITOR / 工作流总览</span><span>MASTER · 16:9</span></div>
+      <div class="stage-chrome"><div class="chrome-dots" aria-hidden="true"><i></i><i></i><i></i></div><span id="chromeTitle">MONITOR / 开场 · 一句话定位</span><span>MASTER · 面试讲解</span></div>
 
-      <article class="view active" id="view-overview" data-title="工作流总览">
-        <header class="view-head"><div><h2>一句灵感，经过六次明确交接</h2><p>每个 Agent 只解决一个阶段问题。用户确认当前产物后，WorkflowEngine 才把确定版本交给下游。</p></div><span class="state">CURRENT IMPLEMENTATION</span></header>
+      <article class="view active" id="view-opening" data-title="开场 · 一句话定位">
+        <header class="view-head"><div><h2>用一句话讲清导梦</h2><p>面试官听第一句话时，只需要记住三件事：它是什么、为谁解决什么问题、你的角色是什么。</p></div><span class="state">30-SECOND PITCH</span></header>
+        <div class="story-body">
+          <div class="pitch">
+            <div class="pitch-card">
+              <h3>THESIS / 一句话定位</h3>
+              <p class="pitch-line">导梦是一个面向<em>非专业短视频与短剧创作者</em>的 AI 视频创作工作流：把「一句话灵感」变成一条<em>可确认、可修改、可继续生成</em>的视频生产流水线。</p>
+              <p class="pitch-note">它不是又一个「文生视频黑盒」，而是一条覆盖剧本、角色、分镜、参考图、视频、后期的完整生产链；每个关键节点都让用户查看、确认和修改。</p>
+              <div class="keyword-box"><span>非专业创作者</span><span>表达门槛</span><span>生成可控性</span><span>结构化创作流程</span><span>多阶段确认</span><span>低成本试错</span><span>角色一致性</span><span>分镜驱动</span><span>首轮可用率</span><span>模型能力边界</span></div>
+            </div>
+            <div class="pitch-card">
+              <h3>FRAME / 面试表达框架</h3>
+              <ul class="frame-order">
+                <li><code>01 背景</code><span>AI 视频工具很多，但创作过程分散、黑盒、难修改。</span></li>
+                <li><code>02 用户问题</code><span>非专业用户有创意，却缺少编剧、分镜和导演能力。</span></li>
+                <li><code>03 产品方案</code><span>把创作拆成六阶段，每阶段可确认、可修改、可继续。</span></li>
+                <li><code>04 我的职责</code><span>AI 产品经理：需求分析、工作流拆解、剧本 Agent 设计、MVP 落地。</span></li>
+                <li><code>05 结果指标</code><span>剧本一次可用率约 45%→72%，分镜可承接率约 50%→76%。</span></li>
+              </ul>
+            </div>
+          </div>
+        </div>
+      </article>
+
+      <article class="view" id="view-pain" data-title="用户与痛点">
+        <header class="view-head"><div><h2>用户从创意到成片，每一步都在「抽卡」</h2><p>痛点不是「不会写提示词」这一件事，而是贯穿创意到成片的整个链路。按用户旅程来讲，面试官更容易听懂。</p></div><span class="state">USER JOURNEY PAIN</span></header>
+        <div class="story-body">
+          <div class="pain-map">
+            <div class="pain-cell"><b><i>01</i>创意构思</b><p>用户只有粗糙想法，不知道怎么变成完整故事：主角是谁、冲突是什么、剧情怎么推进。</p><span class="fix">剧本阶段把模糊创意扩展成结构化短剧。</span></div>
+            <div class="pain-cell"><b><i>02</i>剧本结构</b><p>不知道如何控制节奏、镜头数量、人物对白和情绪转折，一句话生成方向不稳定。</p><span class="fix">剧本 Agent 补全场景、人物、风格、动作与镜头表达。</span></div>
+            <div class="pain-cell"><b><i>03</i>角色与场景</b><p>没有统一资产设定，每次生成都像重新抽卡：脸变了、衣服变了、场景风格也变了。</p><span class="fix">角色与场景 Agent 沉淀固定视觉资产，供后续镜头复用。</span></div>
+            <div class="pain-cell"><b><i>04</i>分镜设计</b><p>不会拆镜头，动作描述模糊，图生视频时动作不合理、镜头不连贯。</p><span class="fix">分镜 Agent 拆出景别、动作、时长与画面重点。</span></div>
+            <div class="pain-cell"><b><i>05</i>参考图与视频</b><p>成本最高、最容易抽卡；多次生成后人物、场景、剧情难以保持一致。</p><span class="fix">参考图 Agent + 首帧/首尾帧/参考图三种生成模式。</span></div>
+            <div class="pain-cell"><b><i>06</i>后期拼接</b><p>多段视频时长有限，拼接后一致性差，还要处理字幕、配音、剪辑与成片节奏。</p><span class="fix">后期 Agent 按分集与 segment 顺序拼接成片。</span></div>
+          </div>
+          <div class="opportunity"><b>导梦的机会点</b><p>不直接替用户「一句话生成视频」，而是把创作流程拆成多个可确认的阶段。把错误提前暴露在低成本阶段，减少后期高成本抽卡，提高角色一致性与成片可控性。</p></div>
+        </div>
+      </article>
+
+      <article class="view" id="view-overview" data-title="产品方案 · 六阶段工作流">
+        <header class="view-head"><div><h2>一句话灵感，经过六次明确交接</h2><p>每个 Agent 只解决一个阶段问题。用户确认当前产物后，WorkflowEngine 才把确定版本交给下游。</p></div><span class="state">CURRENT IMPLEMENTATION</span></header>
         <div class="overview-body">
           <div class="overview-monitor">
             <aside class="brief-rail">
@@ -254,7 +349,7 @@
               <div class="monitor-title"><span>PROGRAM / 六阶段生产链</span><span>00:01:58:00</span></div>
               <div class="stage-gallery">
                 <div class="stage-frame"><b>剧本</b><small>ScriptWriter</small><div class="frame-art generated-visual visual-0" role="img" aria-label="剧本纸张与场记板"></div></div>
-                <div class="stage-frame"><b>角色场景</b><small>CharacterDesigner</small><div class="frame-art generated-visual visual-1" role="img" aria-label="女主角设定与旧影院场景设计"></div></div>
+                <div class="stage-frame"><b>角色场景</b><small>CharacterDesigner</small><div class="frame-art generated-visual visual-1" role="img" aria-label="女主角设定与旧影院场景设定"></div></div>
                 <div class="stage-frame"><b>分镜</b><small>Storyboard</small><div class="frame-art generated-visual visual-2" role="img" aria-label="雨夜旧影院分镜板"></div></div>
                 <div class="stage-frame"><b>参考图</b><small>ReferenceGenerator</small><div class="frame-art generated-visual visual-3" role="img" aria-label="女主角站在旧影院门厅的参考画面"></div></div>
                 <div class="stage-frame"><b>视频片段</b><small>VideoDirector</small><div class="frame-art generated-visual visual-4" role="img" aria-label="女主角穿过放映厅的视频帧序列"></div></div>
@@ -287,7 +382,7 @@
             <div class="layer"><b class="layer-name">编排层</b><div class="layer-nodes"><span>WorkflowEngine</span><span>阶段状态机</span><span>跨阶段资产同步</span></div><span class="layer-purpose">控制顺序、状态、停止和继续。</span></div>
             <div class="layer"><b class="layer-name">Agent 层</b><div class="layer-nodes"><span>文本 Agent × 2</span><span>媒体 Agent × 3</span><span>后期 Agent × 1</span></div><span class="layer-purpose">六个 Agent 各自执行一个清晰阶段。</span></div>
             <div class="layer"><b class="layer-name">模型适配层</b><div class="layer-nodes"><span>LLM Adapter</span><span>Image Adapter</span><span>Video Adapter</span></div><span class="layer-purpose">屏蔽不同模型服务的调用差异。</span></div>
-            <div class="layer"><b class="layer-name">资产与状态层</b><div class="layer-nodes"><span>Session / WorkflowState</span><span>Versions / Selected</span><span>Files / Config</span></div><span class="layer-purpose">保留产物版本、选择关系和文件路径。</span></div>
+            <div class="layer"><b class="layer-name">资产与状态层</b><div class="layer-nodes"><span>Session / WorkflowState</span><span>Versions / Selected</span><span>Files / Config</span></div><span class="layer-purpose">保留产物版本、选择关系与文件路径。</span></div>
           </div>
           <div class="architecture-note">
             <div><b>Agent 不直接协商</b><p>所有阶段由 WorkflowEngine 顺序调度，通过 Session 交接数据。</p></div>
@@ -317,25 +412,97 @@
         </div>
       </article>
 
-      <article class="view" id="view-role" data-title="职责与边界">
-        <header class="view-head"><div><h2>项目中的产品职责与实现边界</h2><p>这部分用于说明个人负责的产品工作、团队协作范围，以及当前能力和后续优化之间的区别。</p></div><span class="state">PROJECT TRUTH</span></header>
+      <article class="view" id="view-role" data-title="我的角色与贡献">
+        <header class="view-head"><div><h2>面试常问：你在项目里具体做了什么</h2><p>区分「个人负责」和「团队协作完成」，并说明自己的技术边界。这比把整个项目都算成个人产出更可信。</p></div><span class="state">PROJECT TRUTH</span></header>
         <div class="role-body">
           <div class="role-grid">
-            <section class="role-col"><h3>个人重点负责</h3><ul><li>前端需求分析与阶段工作台交互梳理</li><li>产品定位与六阶段生产链表达</li><li>ScriptWriterAgent 的输入输出和生成流程定义</li><li>关键人工确认点、局部重生成和失败回退设计</li></ul></section>
+            <section class="role-col"><h3>个人重点负责</h3><ul><li>用户需求分析与产品定位：识别非专业创作者表达门槛</li><li>六阶段生产链的产品表达与工作流拆解</li><li>ScriptWriterAgent 的输入输出、结构化字段与生成流程定义</li><li>关键人工确认点、局部重生成与失败回退设计</li><li>三轮提示词评测与结构化字段优化（一次可用率 45%→72%）</li></ul></section>
             <section class="role-col"><h3>团队协作完成</h3><ul><li>其他阶段 Agent 的能力实现与联调</li><li>WorkflowEngine、接口和 Session 状态管理</li><li>模型适配、媒体资产处理与本地文件管理</li><li>完整前后端工作流的整合与验证</li></ul></section>
           </div>
-          <div class="truth-box"><b>Creative Brief 属于产品优化建议</b><p>当前产品读取用户提供的创意、风格、集数、画幅和模型配置，再由剧本 Prompt 自动补全故事。信息缺失时主动向用户追问人物外貌、场景、风格和冲突方向，是后续可增加的 Agent 交互能力。</p></div>
+          <div class="truth-box"><b>面试表达要点</b><p>用「背景 → 用户问题 → 产品方案 → 我的职责 → 结果指标」的顺序回答；明确 AI 编程工具用于把规则转成可运行原型，生产级后端、数据库和模型接口由专业技术同学负责。</p></div>
         </div>
       </article>
 
-      <footer class="statusbar"><span>DAOMENG / ARCHITECTURE WORKPRINT</span><span>WorkflowState: <b>READY FOR REVIEW</b></span><span>HUMAN-IN-THE-LOOP</span></footer>
+      <article class="view" id="view-difficulty" data-title="难点与解决">
+        <header class="view-head"><div><h2>面试常问：项目最大的难点是什么</h2><p>准备两到三个真实难点，每个难点按「表现 → 定位 → 解决 → 结果」讲述，并落到可迁移的方法。</p></div><span class="state">PROBLEM-SOLVING</span></header>
+        <div class="story-body">
+          <div class="diff-grid">
+            <div class="diff-card">
+              <span class="tag">DIFFICULTY 01 · 信息断裂</span>
+              <h3>剧本、角色、分镜、视频之间信息断裂</h3>
+              <p>阶段各自独立生成，中间产物缺少结构化字段承接，导致角色不一致、分镜承接率低、跨环节信息丢失。</p>
+              <p>定位：不是模型单点问题，而是链路缺少结构化中间资产与确认点。</p>
+              <p>解决：结构化字段 + 用户确认 + 局部重生成，同一 segment_id 贯穿分镜、参考图与视频。</p>
+              <div class="result">结果：分镜可承接率约 50% → 76%。</div>
+            </div>
+            <div class="diff-card">
+              <span class="tag">DIFFICULTY 02 · 一次可用率</span>
+              <h3>剧本首次生成可用率只有约 45%</h3>
+              <p>用户输入模糊，提示词自动补全的信息不稳定，模型对「人物、场景、风格、冲突」的理解宽泛。</p>
+              <p>定位：通过三轮提示词评测定位到信息缺口与字段缺失。</p>
+              <p>解决：结构化字段优化 + 失败回退机制，把关键缺口交给用户确认。</p>
+              <div class="result">结果：剧本一次可用率约 45% → 72%。</div>
+            </div>
+            <div class="diff-card">
+              <span class="tag">DIFFICULTY 03 · 生成不可控</span>
+              <h3>黑盒生成导致反复抽卡、成本浪费</h3>
+              <p>一句话直接出片时，局部不满意只能整条重来，token 与生成额度浪费严重。</p>
+              <p>解决：多阶段确认把错误拦截在低成本阶段；参考图约束画面；支持首帧/首尾帧/参考图三种模式。</p>
+              <div class="result">方法：让用户在最终结果之前确认，而不只是在成片上承担失败成本。</div>
+            </div>
+            <div class="diff-card">
+              <span class="tag">DIFFICULTY 04 · 评测前置</span>
+              <h3>评测标准如何成为产品控制机制</h3>
+              <p>借鉴模型评测思路：先定义不同分值对应的状态与阈值，再用这些边界约束模型生成。</p>
+              <p>解决：Rubric 与阈值约束生成过程，确定性边界交给状态、规则和代码。</p>
+              <div class="result">方法：AI 稳定性不能只依赖提示词，要把安全边界与数值交给程序控制。</div>
+            </div>
+          </div>
+          <div class="method-box"><b>沉淀的方法</b><p>第一，AI 产品稳定性不能只依赖提示词，要把确定性边界交给状态、规则和代码；第二，评测方法可以前置为产品控制机制；第三，排查 AI 问题必须覆盖整条调用链，并保留版本记录与回归用例。</p></div>
+        </div>
+      </article>
+
+      <article class="view" id="view-concepts" data-title="面试概念卡">
+        <header class="view-head"><div><h2>面试中被问到的概念，怎么用导梦讲</h2><p>先给定义，再用导梦的真实机制映射，最后落到你负责的部分。避免只背概念、没有项目证据。</p></div><span class="state">CONCEPT + PROJECT EVIDENCE</span></header>
+        <div class="story-body">
+          <div class="concept-grid">
+            <div class="concept-card"><h3>Agent 架构</h3><span class="en">AGENT = MODEL + HARNESS</span><p>Agent 能围绕目标自主完成任务：理解目标、拆解任务、调用工具、观察结果、继续调整。一般分交互层、理解与决策层、规划层、记忆与上下文层、工具执行层、运行与控制层。</p><span class="map">导梦是集中式六阶段 Agent 工作流：WorkflowEngine 是运行控制中枢，Session 是记忆与状态，各阶段 Agent 是执行单元。</span></div>
+            <div class="concept-card"><h3>Workflow vs Agent</h3><span class="en">FIXED PIPELINE vs AUTONOMOUS LOOP</span><p>Workflow 是固定编排，路径确定、可预期；Agent 是动态决策，根据中间结果选择下一步。适合确定性任务用 Workflow，开放任务用 Agent。</p><span class="map">导梦核心链路是 Workflow（六阶段固定顺序），每个阶段内部用模型做开放生成；这是「Workflow 为主 + 模型决策」的组合。</span></div>
+            <div class="concept-card"><h3>Harness vs Hermes</h3><span class="en">MECHANISM vs FRAMEWORK</span><p>Harness 是通用 Agent 运行机制：接收指令、调用工具、管理上下文、保存状态、失败重试、判断完成。Hermes 是具体开源 Agent 框架，内部封装了一套 Harness。</p><span class="map">导梦没有直接基于 Hermes 开发，而是自建 Workflow 与 Harness 机制：模型、状态、工具、记忆、运行控制都由自己的前后端实现。</span></div>
+            <div class="concept-card"><h3>ReAct</h3><span class="en">REASON + ACT LOOP</span><p>模型在推理与行动之间交替：先思考当前需要什么信息，再调用工具获取，观察结果后继续推理，直到完成任务。</p><span class="map">导梦的局部重生成与失败回退可以类比：Agent 根据上一阶段产物判断缺口，再决定是否重做目标资产。</span></div>
+            <div class="concept-card"><h3>MCP</h3><span class="en">MODEL CONTEXT PROTOCOL</span><p>标准化模型接入外部工具与数据的协议，让 Agent 用统一方式调用搜索、文件、数据库、API 等能力。</p><span class="map">导梦通过模型适配层（LLM/Image/Video Adapter）屏蔽不同服务商调用差异，思路与 MCP 一致：业务不绑定单一厂商。</span></div>
+            <div class="concept-card"><h3>Skill</h3><span class="en">REUSABLE CAPABILITY</span><p>把一套任务流程封装成可复用能力，有明确触发条件、输入输出、工作步骤、事实约束与测试方式。</p><span class="map">面试复盘 Skill：把「提取原问题 → 诊断回答 → 映射项目 → 可编辑确认 → 写入飞书」沉淀成可复用流程，正是 Skill 的实践。</span></div>
+            <div class="concept-card"><h3>FDE</h3><span class="en">FORWARD DEPLOYED ENGINEER</span><p>深入真实业务现场，把模型和平台能力转化成生产环境可运行的系统：理解工作流、找到 AI 改造点、最小方案、生产化、推广与沉淀。</p><span class="map">政府采购规则 Agent 是一次小规模 FDE 式实践：把规则文档作为知识源，保留引用与人工确认。</span></div>
+            <div class="concept-card"><h3>AI Native</h3><span class="en">AI AS CORE VALUE</span><p>AI 不是附加功能，而是产品核心价值与交互方式的来源。导梦用模型能力重组「视频创作」这件事本身。</p><span class="map">导梦的六阶段生成链、局部重生成、结构化中间资产，都是围绕模型能力边界设计的 AI Native 产品。</span></div>
+          </div>
+        </div>
+      </article>
+
+      <article class="view" id="view-qa" data-title="高频问答">
+        <header class="view-head"><div><h2>高频问题怎么答：先覆盖主线，再补证据</h2><p>不要机械背答案。先用导梦覆盖高频主线，再为每类追问补「角色、关键判断、数据口径、失败点、下一次怎么做」。</p></div><span class="state">HIGH-FREQUENCY Q&A</span></header>
+        <div class="story-body">
+          <ol class="qa-list">
+            <li class="qa-item"><div class="q"><i>Q1</i>请做一个简短的自我介绍</div><div class="a"><b>框架：</b>一句话定位（两段 AI 实践）+ 两个可验证能力（模型评测判断力、AI 产品 0→1 落地）+ 一个项目钩子（导梦/饲界）。不要罗列所有经历。</div></li>
+            <li class="qa-item"><div class="q"><i>Q2</i>请完整介绍导梦这个项目</div><div class="a"><b>框架：</b>背景 → 用户问题 → 产品方案（六阶段工作流）→ 我的职责（剧本 Agent 设计）→ 结果指标（一次可用率 45%→72%）。强调「可确认、可修改、可继续生成」而非单纯 prompt 工具。</div></li>
+            <li class="qa-item"><div class="q"><i>Q3</i>你在项目中的角色、职责和团队分工是什么</div><div class="a"><b>要点：</b>产品设计与 AI 生成链路优化；区分个人负责（剧本 Agent 输入输出/确认/回退）与团队协作（后端、模型接入、其他 Agent 联调）；明确技术边界。</div></li>
+            <li class="qa-item"><div class="q"><i>Q4</i>项目最大的难点是什么，你如何定位并解决</div><div class="a"><b>要点：</b>选「信息断裂」或「一次可用率低」，按「表现 → 定位 → 解决 → 结果」讲；落脚到可迁移方法（结构化字段、评测前置、局部重生成）。</div></li>
+            <li class="qa-item"><div class="q"><i>Q5</i>你的产品与竞品有什么差异</div><div class="a"><b>要点：</b>区分直接竞品与间接竞品；导梦对比即梦等：不只生成，而是可确认、可修改、可继续生成的全链路工作流；「功能只是手段，用户价值才是差异」。</div></li>
+            <li class="qa-item"><div class="q"><i>Q6</i>为什么拆成多个阶段，而不是一句话直接生成视频</div><div class="a"><b>要点：</b>一句话生成对当前模型不可控、试错成本高；拆阶段把错误拦截在低成本阶段，提高角色一致性与成片可控性；未来模型变强可加「一句话快速模式」。</div></li>
+            <li class="qa-item"><div class="q"><i>Q7</i>如果导梦上线后用户反馈「生成结果不稳定」，你怎么定位</div><div class="a"><b>要点：</b>先拆类型（理解偏差/视觉一致性/动作镜头/画质/流程体验），再按链路逐层排查（输入→剧本→角色→分镜→参考图→视频），用阶段重生成率定位问题环节，最后前移确认点。</div></li>
+            <li class="qa-item"><div class="q"><i>Q8</i>如何为导梦设计核心指标体系</div><div class="a"><b>要点：</b>北极星「有效成片率」；过程看阶段完成率与漏斗流失；交互看各阶段重新生成率、确认率、修改次数；成本看单条成片平均生成次数与 token；结果看首轮可用率、导出率、复用率、留存。</div></li>
+          </ol>
+          <div class="qa-tip">使用建议：凡涉及具体数字、公司名称、上线状态、模型名称和项目结果，都以你的真实记录为准，不要为了答案完整而补造信息。</div>
+        </div>
+      </article>
+
+      <footer class="statusbar"><span>DAOMENG / INTERVIEW ARCHITECTURE</span><span>WorkflowState: <b>READY FOR INTERVIEW</b></span><span>HUMAN-IN-THE-LOOP</span></footer>
     </section>
   </main>
 
   <script>
-    const agents=[
+const agents=[
       {
-        n:'02',name:'剧本 Agent',className:'ScriptWriterAgent',summary:'把一句创意扩展成可拍摄的分集剧本，并提取整条视频生产线需要的角色与场景数据。',
+        n:'08',name:'剧本 Agent',className:'ScriptWriterAgent',summary:'把一句创意扩展成可拍摄的分集剧本，并提取整条视频生产线需要的角色与场景数据。',
         inputs:[['idea / style / episodes','用户创意、风格与集数'],['language / model config','语言和 LLM 配置'],['existing episodes','智能续写时读取已有剧集']],
         fields:['故事主题','人物关系','角色外貌','核心场景','情节冲突','影像风格','集数与篇幅'],
         gap:'当前：Prompt 自动补全缺失信息。优化建议：生成前把人物、场景、风格和冲突整理成 Creative Brief，并向用户确认关键缺口。',
@@ -346,7 +513,7 @@
         upstream:'用户创意与配置',handoff:'characters[] · settings[] · episodes[]',downstream:'角色与场景 Agent',kind:'text'
       },
       {
-        n:'03',name:'角色与场景 Agent',className:'CharacterDesignerAgent',summary:'读取剧本中的人物和地点描述，生成可复用的视觉资产，并让用户确定后续镜头使用的版本。',
+        n:'08',name:'角色与场景 Agent',className:'CharacterDesignerAgent',summary:'读取剧本中的人物和地点描述，生成可复用的视觉资产，并让用户确定后续镜头使用的版本。',
         inputs:[['characters[] / settings[]','剧本阶段提取的角色与场景'],['style / ratio','全片风格与画幅'],['image model config','文生图、图生图模型配置'],['target asset id','局部重生成目标']],
         fields:['年龄与外貌','服装与道具','角色视角','场景空间','光线与色调','画幅','一致性参考'],
         gap:'角色和场景描述从剧本资产读取；用户上传的图片或已选版本会成为后续生成的确定参考。',
@@ -357,7 +524,7 @@
         upstream:'characters[] · settings[]',handoff:'selected character / setting assets',downstream:'分镜与参考图 Agent',kind:'visual'
       },
       {
-        n:'04',name:'分镜 Agent',className:'StoryboardAgent',summary:'把每集剧本拆成适合单次视频生成的 segment，并为每个 segment 设计镜头、时长和提示词。',
+        n:'08',name:'分镜 Agent',className:'StoryboardAgent',summary:'把每集剧本拆成适合单次视频生成的 segment，并为每个 segment 设计镜头、时长和提示词。',
         inputs:[['episodes[]','分集剧本与动作台词'],['character / setting names','角色和场景名称'],['style / duration rules','风格和目标片段时长']],
         fields:['segment 目标','镜头景别','机位与运镜','主体动作','对白内容','片段时长','视觉与动态提示词'],
         gap:'一个 segment 对应一次视频模型调用；segment 内可以包含多个 shot，但需要共享连续的时间与动作。',
@@ -368,7 +535,7 @@
         upstream:'episodes[] · visual assets',handoff:'segment_id · shots[] · prompts',downstream:'参考图 Agent',kind:'shots'
       },
       {
-        n:'05',name:'参考图 Agent',className:'ReferenceGeneratorAgent',summary:'组合分镜、已选角色图和场景图，为每个 segment 生成约束视频画面的首帧参考图。',
+        n:'08',name:'参考图 Agent',className:'ReferenceGeneratorAgent',summary:'组合分镜、已选角色图和场景图，为每个 segment 生成约束视频画面的首帧参考图。',
         inputs:[['storyboard segments','分镜片段与 visual_prompt'],['selected visual assets','用户确认的角色和场景版本'],['image model config','文生图或图生图模型配置']],
         fields:['镜头构图','人物位置','角色一致性','场景一致性','光线与色调','首帧动作状态','画幅'],
         gap:'参考图与 segment_id 一一对齐，是分镜描述进入视频模型前的视觉确认层。',
@@ -379,7 +546,7 @@
         upstream:'segment · selected visual assets',handoff:'selected reference frame',downstream:'视频 Agent',kind:'image'
       },
       {
-        n:'06',name:'视频 Agent',className:'VideoDirectorAgent',summary:'根据动态提示词和用户选定的参考资产，按生成模式调用视频模型，产出每个 segment 的视频片段。',
+        n:'08',name:'视频 Agent',className:'VideoDirectorAgent',summary:'根据动态提示词和用户选定的参考资产，按生成模式调用视频模型，产出每个 segment 的视频片段。',
         inputs:[['video_prompt / duration','动态描述与片段时长'],['selected references','首帧、首尾帧或角色场景参考'],['mode / video model','生成模式与视频模型配置']],
         fields:['主体动作','镜头运动','开始状态','结束状态','时长','参考资产','生成模式'],
         gap:'当前支持首帧、首尾帧和参考图三种输入路径；不同模式根据模型能力组装媒体参数。',
@@ -390,7 +557,7 @@
         upstream:'video_prompt · selected frame',handoff:'selected_clips',downstream:'后期 Agent',kind:'video'
       },
       {
-        n:'07',name:'后期 Agent',className:'VideoEditorAgent',summary:'读取用户确认的视频片段，按分集和 segment 顺序生成拼接列表，通过 FFmpeg 输出最终成片。',
+        n:'08',name:'后期 Agent',className:'VideoEditorAgent',summary:'读取用户确认的视频片段，按分集和 segment 顺序生成拼接列表，通过 FFmpeg 输出最终成片。',
         inputs:[['selected_clips','用户确认的视频版本'],['episode / segment order','分集与片段顺序'],['local video files','已下载的本地视频文件']],
         fields:['分集归属','片段顺序','已选版本','本地文件路径','拼接列表','输出路径'],
         gap:'后期阶段只读取 selected_clips，避免候选版本误入最终成片。',
@@ -401,8 +568,7 @@
         upstream:'selected_clips',handoff:'final_videos[] · final_video',downstream:'用户查看与导出',kind:'final'
       }
     ];
-
-    const nav=document.getElementById('directoryNav');
+const nav=document.getElementById('directoryNav');
     const agentNav=document.getElementById('agentNav');
     const views=[...document.querySelectorAll('.view')];
     const chromeTitle=document.getElementById('chromeTitle');
@@ -501,6 +667,10 @@
       const seconds=Math.floor(Date.now()/1000)%60;
       document.getElementById('clock').textContent=`00:00:${String(seconds).padStart(2,'0')}:${String(frames).padStart(2,'0')}`;
     },80);
+  </script>
+</body>
+</html>
+
   </script>
 </body>
 </html>
