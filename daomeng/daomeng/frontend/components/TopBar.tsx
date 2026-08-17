@@ -1,6 +1,7 @@
 ﻿'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import Image from 'next/image';
 import { CheckCircle, Circle, Loader, Edit3, AlertCircle, Square, Zap, Settings2, ChevronDown } from 'lucide-react';
 import clsx from 'clsx';
 import {
@@ -335,7 +336,14 @@ export default function TopBar({
         onClick={onHomeClick}
         className="flex items-center gap-2 mr-6 hover:opacity-80 transition-opacity flex-shrink-0"
       >
-        <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 via-sky-500 to-emerald-400 text-sm font-bold text-white shadow-sm">导</div>
+        <Image
+          src="/logo.jpg"
+          alt=""
+          width={32}
+          height={32}
+          priority
+          className="shrink-0 rounded-lg object-cover shadow-sm"
+        />
         <div className="flex flex-col leading-tight">
           <span className="font-bold text-sm text-gray-800 tracking-tight">
             导梦

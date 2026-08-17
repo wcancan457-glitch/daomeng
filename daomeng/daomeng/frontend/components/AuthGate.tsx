@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useCallback, useEffect, useState } from 'react';
+import Image from 'next/image';
 import { KeyRound, Loader2, LockKeyhole } from 'lucide-react';
 import {
   fetchAuthStatus,
@@ -59,9 +60,14 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
     <main className="flex min-h-screen items-center justify-center bg-slate-50 px-5 py-12 text-slate-900">
       <section className="w-full max-w-md rounded-3xl border border-slate-200 bg-white p-8 shadow-xl shadow-slate-200/50">
         <div className="mb-7 flex items-center gap-3">
-          <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gradient-to-br from-blue-500 to-cyan-400 text-xl font-bold text-white shadow-lg shadow-blue-200">
-            导
-          </div>
+          <Image
+            src="/logo.jpg"
+            alt=""
+            width={48}
+            height={48}
+            priority
+            className="shrink-0 rounded-2xl object-cover shadow-lg shadow-blue-200"
+          />
           <div>
             <h1 className="text-2xl font-bold">导梦</h1>
             <p className="mt-0.5 text-sm text-slate-500">AI 影像创作工作台</p>

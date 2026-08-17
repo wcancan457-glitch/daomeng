@@ -1,6 +1,7 @@
 ﻿'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
+import Image from 'next/image';
 import { Play, Settings2, Clock, ArrowRight, Zap, CheckCircle, Trash2, X, Lock, Globe, ListOrdered, Upload, Loader2 } from 'lucide-react';
 import clsx from 'clsx';
 import { PROMPT_EXAMPLES } from '@/config/examples';
@@ -294,7 +295,14 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
         {/* 标题 */}
         <div className="text-center mb-10">
           <div className="inline-flex items-center gap-2 mb-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-gradient-to-br from-indigo-500 via-sky-500 to-emerald-400 text-base font-bold text-white shadow-sm">导</span>
+            <Image
+              src="/logo.jpg"
+              alt=""
+              width={40}
+              height={40}
+              priority
+              className="shrink-0 rounded-xl object-cover shadow-sm"
+            />
             <h1 className="text-3xl font-bold text-gray-900">导梦</h1>
           </div>
           <p className="text-sm text-gray-500">

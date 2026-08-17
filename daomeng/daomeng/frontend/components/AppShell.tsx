@@ -1,8 +1,9 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
-import { CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock, Hexagon, Home, Loader2, PanelLeftOpen, Repeat2, Settings, Trash2, UserRound, LogOut } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock, Hexagon, Home, Loader2, Repeat2, Settings, Trash2, UserRound, LogOut } from 'lucide-react';
 import clsx from 'clsx';
 import { useEffect, useState, type CSSProperties } from 'react';
 import { clearTempCache, fetchPipelineTasks, fetchSandboxTasks, fetchSessions, type PipelineTask, type SandboxTask } from '@/lib/workflowApi';
@@ -346,7 +347,13 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <div className={clsx('flex h-full flex-col overflow-hidden transition-opacity duration-200', open ? 'opacity-100' : 'opacity-0')}>
           <div className="flex h-16 items-center px-4 border-b border-gray-100">
             <div className="flex items-center gap-2 min-w-0">
-              <PanelLeftOpen className="w-4 h-4 text-blue-500 flex-shrink-0" />
+              <Image
+                src="/logo.jpg"
+                alt=""
+                width={32}
+                height={32}
+                className="flex-shrink-0 rounded-lg object-cover shadow-sm"
+              />
               <span className="text-sm font-semibold text-gray-800 truncate">导梦</span>
             </div>
           </div>
