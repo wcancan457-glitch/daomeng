@@ -8,11 +8,34 @@ import uuid
 from datetime import datetime
 from typing import Any, Dict, Optional
 
+from sqlalchemy import func, select
+
+from accounts.database import SessionLocal
+from accounts.models import TaskOwnership, utcnow
+from accounts.ownership import (
+    delete_task_ownership,
+    load_task_payload,
+    register_task,
+    save_task_payload,
+    task_payloads_for_user,
+)
 from config import settings
+
 from .events import publish_task_event
 
 logger = logging.getLogger(__name__)
 _task_store_lock = threading.RLock()
+
+
+def _positive_env_int(name: str, default: int) -> int:
+    try:
+        return max(1, int(os.getenv(name, str(default))))
+    except (TypeError, ValueError):
+        return default
+
+
+MAX_PENDING_TASKS_PER_USER = _positive_env_int("MAX_PENDING_TASKS_PER_USER", 10)
+MAX_CONCURRENT_TASKS_PER_USER = _positive_env_int("MAX_CONCURRENT_TASKS_PER_USER", 1)
 
 TASK_DATA_DIR = os.path.join(settings.CODE_DIR, "data", "tasks")
 TASK_RESULT_DIR = os.path.join(settings.RESULT_DIR, "task")
@@ -39,28 +62,48 @@ def now_iso() -> str:
     return datetime.now().isoformat()
 
 
+class TaskQuotaError(RuntimeError):
+    pass
+
+
+def _write_task_file(metadata: Dict[str, Any]) -> None:
+    ensure_task_dirs()
+    path = task_metadata_path(metadata["task_id"])
+    tmp_path = f"{path}.{uuid.uuid4().hex}.tmp"
+    with open(tmp_path, "w", encoding="utf-8") as f:
+        json.dump(metadata, f, ensure_ascii=False, indent=2)
+    os.replace(tmp_path, path)
+
+
 def save_task(metadata: Dict[str, Any]) -> None:
     with _task_store_lock:
-        ensure_task_dirs()
-        path = task_metadata_path(metadata["task_id"])
-        tmp_path = f"{path}.{uuid.uuid4().hex}.tmp"
-        with open(tmp_path, "w", encoding="utf-8") as f:
-            json.dump(metadata, f, ensure_ascii=False, indent=2)
-        os.replace(tmp_path, path)
+        _write_task_file(metadata)
+        save_task_payload(
+            metadata["task_id"],
+            str(metadata.get("user_id") or "legacy-shared"),
+            metadata,
+            task_kind="pipeline",
+        )
 
 
-def load_task(task_id: str) -> Optional[Dict[str, Any]]:
+def load_task(task_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
     with _task_store_lock:
-        path = task_metadata_path(task_id)
-        if not os.path.exists(path):
+        metadata = load_task_payload(task_id)
+        if not metadata:
+            path = task_metadata_path(task_id)
+            if not os.path.exists(path):
+                return None
+            with open(path, "r", encoding="utf-8") as f:
+                metadata = json.load(f)
+        owner_id = str(metadata.get("user_id") or "legacy-shared")
+        if user_id and owner_id != user_id:
             return None
-        with open(path, "r", encoding="utf-8") as f:
-            return json.load(f)
+        return metadata
 
 
-def delete_task(task_id: str) -> bool:
+def delete_task(task_id: str, user_id: Optional[str] = None) -> bool:
     with _task_store_lock:
-        metadata = load_task(task_id)
+        metadata = load_task(task_id, user_id=user_id)
         if not metadata:
             return False
 
@@ -70,28 +113,56 @@ def delete_task(task_id: str) -> bool:
             os.remove(metadata_path)
         if output_dir and os.path.exists(output_dir):
             shutil.rmtree(output_dir)
+    if user_id:
+        delete_task_ownership(task_id, user_id)
     logger.info("Deleted pipeline task: task_id=%s output_dir=%s", task_id, output_dir)
     return True
 
 
-def list_tasks(limit: int = 100) -> list[Dict[str, Any]]:
+def list_tasks(limit: int = 100, user_id: Optional[str] = None) -> list[Dict[str, Any]]:
     with _task_store_lock:
         ensure_task_dirs()
+        if user_id and user_id != "legacy-shared":
+            records = task_payloads_for_user(user_id, task_kind="pipeline")
+            records.sort(key=lambda item: item.get("created_at", ""), reverse=True)
+            return records[:limit]
         records = []
         for filename in os.listdir(TASK_DATA_DIR):
             if not filename.endswith(".json"):
                 continue
             try:
                 with open(os.path.join(TASK_DATA_DIR, filename), "r", encoding="utf-8") as f:
-                    records.append(json.load(f))
+                    metadata = json.load(f)
+                owner_id = str(metadata.get("user_id") or "legacy-shared")
+                if not user_id or owner_id == user_id:
+                    records.append(metadata)
             except Exception:
                 continue
         records.sort(key=lambda item: item.get("created_at", ""), reverse=True)
         return records[:limit]
 
 
-def create_task(pipeline: str, input_params: Dict[str, Any]) -> Dict[str, Any]:
+def create_task(
+    pipeline: str,
+    input_params: Dict[str, Any],
+    user_id: str = "legacy-shared",
+) -> Dict[str, Any]:
     with _task_store_lock:
+        if user_id != "legacy-shared":
+            with SessionLocal() as db:
+                pending_count = db.scalar(
+                    select(func.count())
+                    .select_from(TaskOwnership)
+                    .where(
+                        TaskOwnership.user_id == user_id,
+                        TaskOwnership.task_kind == "pipeline",
+                        TaskOwnership.status == "pending",
+                    )
+                ) or 0
+            if pending_count >= MAX_PENDING_TASKS_PER_USER:
+                raise TaskQuotaError(
+                    f"待处理任务已达到上限（{MAX_PENDING_TASKS_PER_USER} 个），请等待现有任务完成。"
+                )
         ensure_task_dirs()
         task_id = new_task_id()
         output_dir = task_output_dir(task_id)
@@ -99,6 +170,7 @@ def create_task(pipeline: str, input_params: Dict[str, Any]) -> Dict[str, Any]:
         metadata = {
             "task_id": task_id,
             "pipeline": pipeline,
+            "user_id": user_id,
             "status": "pending",
             "progress": 0,
             "message": "Task created",
@@ -114,8 +186,83 @@ def create_task(pipeline: str, input_params: Dict[str, Any]) -> Dict[str, Any]:
             "output_dir": output_dir,
         }
         save_task(metadata)
+        register_task(task_id, user_id, task_kind="pipeline")
     logger.info("Created pipeline task: task_id=%s pipeline=%s output_dir=%s", task_id, pipeline, output_dir)
     return metadata
+
+
+def claim_next_pending_task() -> Optional[Dict[str, Any]]:
+    """Atomically claim one queued pipeline task for a worker."""
+    claimed: Optional[Dict[str, Any]] = None
+    with SessionLocal.begin() as db:
+        running_counts = dict(
+            db.execute(
+                select(TaskOwnership.user_id, func.count())
+                .where(
+                    TaskOwnership.task_kind == "pipeline",
+                    TaskOwnership.status == "running",
+                )
+                .group_by(TaskOwnership.user_id)
+            ).all()
+        )
+        candidates = db.scalars(
+            select(TaskOwnership)
+            .where(
+                TaskOwnership.task_kind == "pipeline",
+                TaskOwnership.status == "pending",
+            )
+            .order_by(TaskOwnership.created_at.asc())
+            .with_for_update(skip_locked=True)
+        ).all()
+        for owner in candidates:
+            if running_counts.get(owner.user_id, 0) >= MAX_CONCURRENT_TASKS_PER_USER:
+                continue
+            claimed = dict(owner.payload or {})
+            claimed.update(
+                status="running",
+                progress=max(1, int(claimed.get("progress") or 0)),
+                message="Task running",
+                started_at=claimed.get("started_at") or now_iso(),
+                updated_at=now_iso(),
+            )
+            owner.status = "running"
+            owner.payload = claimed
+            owner.updated_at = utcnow()
+            break
+    if claimed:
+        with _task_store_lock:
+            _write_task_file(claimed)
+    return claimed
+
+
+def recover_interrupted_tasks() -> int:
+    """Return tasks left running by a stopped process to the durable queue."""
+    recovered: list[Dict[str, Any]] = []
+    with SessionLocal.begin() as db:
+        owners = db.scalars(
+            select(TaskOwnership).where(
+                TaskOwnership.task_kind == "pipeline",
+                TaskOwnership.status == "running",
+            )
+        ).all()
+        for owner in owners:
+            payload = dict(owner.payload or {})
+            payload.update(
+                status="pending",
+                progress=0,
+                message="Task recovered after service restart",
+                started_at=None,
+                updated_at=now_iso(),
+                retry_count=int(payload.get("retry_count") or 0) + 1,
+            )
+            owner.status = "pending"
+            owner.payload = payload
+            owner.updated_at = utcnow()
+            recovered.append(payload)
+    with _task_store_lock:
+        for metadata in recovered:
+            _write_task_file(metadata)
+    return len(recovered)
 
 
 def update_task(task_id: str, **updates: Any) -> Dict[str, Any]:

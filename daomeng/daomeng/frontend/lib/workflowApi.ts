@@ -1,4 +1,4 @@
-import { authenticatedFetch, authenticatedUrl } from '@/lib/auth';
+import { authenticatedFetch } from '@/lib/auth';
 
 /**
  * 工作流 API 客户端
@@ -251,19 +251,42 @@ export function subscribePipelineTask(
   onEvent: (event: PipelineTaskEvent) => void,
   onError?: () => void,
 ): () => void {
-  const source = new EventSource(authenticatedUrl(`${STREAM_API_BASE}/api/tasks/${taskId}/events`));
-  source.onmessage = event => {
+  const controller = new AbortController();
+  void (async () => {
     try {
-      onEvent(JSON.parse(event.data));
+      const response = await authenticatedFetch(`${STREAM_API_BASE}/api/tasks/${taskId}/events`, {
+        headers: { Accept: 'text/event-stream' },
+        signal: controller.signal,
+      });
+      if (!response.ok || !response.body) throw new Error('任务事件流连接失败');
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      while (!controller.signal.aborted) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split('\n\n');
+        buffer = blocks.pop() || '';
+        for (const block of blocks) {
+          const data = block
+            .split('\n')
+            .filter(line => line.startsWith('data:'))
+            .map(line => line.slice(5).trim())
+            .join('\n');
+          if (!data) continue;
+          try {
+            onEvent(JSON.parse(data));
+          } catch {
+            // Ignore malformed stream events and keep the connection alive.
+          }
+        }
+      }
     } catch {
-      // Ignore malformed stream events.
+      if (!controller.signal.aborted) onError?.();
     }
-  };
-  source.onerror = () => {
-    onError?.();
-    source.close();
-  };
-  return () => source.close();
+  })();
+  return () => controller.abort();
 }
 
 export async function startProject(params: {

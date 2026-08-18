@@ -4,8 +4,8 @@ import AuthGate from "@/components/AuthGate";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "导梦",
-  description: "AI视频生成工具",
+  title: "导梦 · AI 影像创作工作台",
+  description: "从创意、剧本、分镜到视频生成的一站式 AI 影像创作工作台",
 };
 
 export default function RootLayout({
@@ -15,9 +15,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="zh-CN">
-      <body
-        className="antialiased"
-      >
+      <body className="antialiased">
         <AuthGate>
           <AppShell>{children}</AppShell>
         </AuthGate>

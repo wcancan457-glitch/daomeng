@@ -1,8 +1,11 @@
 import time
+import uuid
 
 from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import StreamingResponse
 
+from accounts.ownership import project_owned_by, register_project
+from api.auth_context import request_user_id
 from api.dependencies import workflow_engine
 from api.routers.files import merge_uploaded_file_into_idea
 from api.schemas.project import InterventionRequest, ProjectStartRequest
@@ -52,12 +55,23 @@ def _require_model_fields(values: dict) -> None:
         )
 
 
+def _require_project_access(request: Request, session_id: str) -> str:
+    user_id = request_user_id(request)
+    if not project_owned_by(session_id, user_id):
+        raise HTTPException(404, "Session not found")
+    return user_id
+
+
 @router.post("/api/project/start")
-async def start_project(req: ProjectStartRequest):
-    final_idea = merge_uploaded_file_into_idea(req.idea, req.file_path)
+async def start_project(req: ProjectStartRequest, request: Request):
+    user_id = request_user_id(request)
+    try:
+        final_idea = merge_uploaded_file_into_idea(req.idea, req.file_path, user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     _require_model_fields(req.model_dump())
 
-    session_id = str(int(time.time() * 1000))
+    session_id = f"{int(time.time() * 1000)}_{uuid.uuid4().hex[:8]}"
     meta = {
         "idea": final_idea,
         "user_textbox_input": req.idea,
@@ -78,9 +92,11 @@ async def start_project(req: ProjectStartRequest):
         "enable_concurrency": req.enable_concurrency if req.enable_concurrency is not None else True,
         "web_search": req.web_search if req.web_search is not None else False,
         "episodes": req.episodes if req.episodes is not None else 4,
+        "user_id": user_id,
     }
     meta["video_model"] = _active_video_model(meta)
     session = workflow_engine.create_session(session_id, meta)
+    register_project(session_id, user_id)
 
     return {
         "session_id": session_id,
@@ -107,6 +123,7 @@ async def start_project(req: ProjectStartRequest):
 
 @router.post("/api/project/{session_id}/execute/{stage}")
 async def execute_stage(session_id: str, stage: str, request: Request):
+    _require_project_access(request, session_id)
     try:
         body = await request.json()
     except Exception:
@@ -142,7 +159,8 @@ async def execute_stage(session_id: str, stage: str, request: Request):
 
 
 @router.get("/api/project/{session_id}/status")
-async def get_project_status(session_id: str):
+async def get_project_status(session_id: str, request: Request):
+    _require_project_access(request, session_id)
     snapshot = workflow_engine.get_status_snapshot(session_id)
     if not snapshot:
         raise HTTPException(404, "Session not found")
@@ -150,7 +168,8 @@ async def get_project_status(session_id: str):
 
 
 @router.get("/api/project/{session_id}/status/from_disk")
-async def get_project_status_from_disk(session_id: str):
+async def get_project_status_from_disk(session_id: str, request: Request):
+    _require_project_access(request, session_id)
     # 兼容旧前端路由名；实际读取统一走 WorkflowEngine 的内存状态入口。
     snapshot = workflow_engine.get_status_snapshot(session_id)
     if not snapshot:
@@ -159,7 +178,8 @@ async def get_project_status_from_disk(session_id: str):
 
 
 @router.get("/api/project/{session_id}/artifact/{stage}")
-async def get_artifact(session_id: str, stage: str):
+async def get_artifact(session_id: str, stage: str, request: Request):
+    _require_project_access(request, session_id)
     try:
         artifact = workflow_engine.get_artifact_snapshot(session_id, stage)
     except KeyError:
@@ -173,6 +193,7 @@ async def get_artifact(session_id: str, stage: str):
 
 @router.patch("/api/project/{session_id}/models")
 async def update_models(session_id: str, request: Request):
+    _require_project_access(request, session_id)
     body = await request.json()
     allowed_keys = (
         "llm_model",
@@ -199,11 +220,13 @@ async def update_models(session_id: str, request: Request):
 async def upload_artifact_image(
     session_id: str,
     stage: str,
+    request: Request,
     item_type: str = Form(...),
     item_id: str = Form(...),
     file: UploadFile = File(...),
 ):
     """Upload a user-provided image into a stage artifact and persist the session."""
+    _require_project_access(request, session_id)
     try:
         return workflow_engine.upload_artifact_image(
             session_id=session_id,
@@ -224,6 +247,7 @@ async def upload_artifact_image(
 @router.patch("/api/project/{session_id}/artifact/{stage}")
 async def update_artifact(session_id: str, stage: str, request: Request):
     """保存用户在某阶段的选择/修改，同时更新内存状态和磁盘快照。"""
+    _require_project_access(request, session_id)
     body = await request.json()
     try:
         return workflow_engine.update_artifact(session_id, stage, body if isinstance(body, dict) else {})
@@ -235,6 +259,7 @@ async def update_artifact(session_id: str, stage: str, request: Request):
 
 @router.post("/api/project/{session_id}/intervene")
 async def intervene(session_id: str, req: InterventionRequest, request: Request):
+    _require_project_access(request, session_id)
     try:
         state, input_data = workflow_engine.prepare_intervention_execution(
             session_id=session_id,
@@ -271,20 +296,23 @@ async def intervene(session_id: str, req: InterventionRequest, request: Request)
 
 
 @router.post("/api/project/{session_id}/continue")
-async def continue_workflow(session_id: str):
+async def continue_workflow(session_id: str, request: Request):
+    _require_project_access(request, session_id)
     if not workflow_engine.get_status_snapshot(session_id):
         raise HTTPException(404, "Session not found")
     return await workflow_engine.continue_workflow(session_id)
 
 
 @router.post("/api/project/{session_id}/stop")
-async def stop_project(session_id: str):
+async def stop_project(session_id: str, request: Request):
+    _require_project_access(request, session_id)
     workflow_engine.stop_session(session_id)
     return {"status": "stopped", "session_id": session_id}
 
 
 @router.get("/api/project/{session_id}/scene/{scene_number}/assets")
-async def check_scene_assets(session_id: str, scene_number: int):
+async def check_scene_assets(session_id: str, scene_number: int, request: Request):
+    _require_project_access(request, session_id)
     try:
         return workflow_engine.get_scene_asset_counts(session_id, scene_number)
     except KeyError:

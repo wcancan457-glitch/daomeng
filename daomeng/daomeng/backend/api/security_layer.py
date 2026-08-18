@@ -16,6 +16,11 @@ from fastapi import Request
 from fastapi.responses import JSONResponse, Response
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 
+from accounts.database import SessionLocal
+from accounts.ownership import asset_path_owned_by
+from accounts.service import validate_session
+from accounts.tokens import TokenError, decode_access_token, tokens_configured
+
 
 def _env_bool(name: str, default: bool = False) -> bool:
     raw = os.getenv(name)
@@ -35,10 +40,16 @@ def _split_origins(value: str) -> list[str]:
     return [origin.strip().rstrip("/") for origin in value.split(",") if origin.strip()]
 
 
-AUTH_REQUIRED = _env_bool("AUTH_REQUIRED", False)
+_legacy_auth_required = _env_bool("AUTH_REQUIRED", False)
+AUTH_MODE = os.getenv("AUTH_MODE", "shared" if _legacy_auth_required else "disabled").strip().lower()
+if AUTH_MODE not in {"disabled", "shared", "users"}:
+    AUTH_MODE = "shared" if _legacy_auth_required else "disabled"
+AUTH_REQUIRED = AUTH_MODE != "disabled"
 ACCESS_PASSWORD = os.getenv("APP_ACCESS_PASSWORD", "")
+REGISTRATION_ENABLED = _env_bool("REGISTRATION_ENABLED", True)
 TOKEN_TTL_SECONDS = _env_int("AUTH_TOKEN_TTL_SECONDS", 24 * 60 * 60, 300)
 RATE_LIMIT_PER_MINUTE = _env_int("API_RATE_LIMIT_PER_MINUTE", 60, 5)
+AUTH_RATE_LIMIT_PER_MINUTE = _env_int("AUTH_RATE_LIMIT_PER_MINUTE", 10, 3)
 MAX_UPLOAD_BYTES = _env_int("MAX_UPLOAD_BYTES", 25 * 1024 * 1024, 1024 * 1024)
 ALLOWED_ORIGINS = _split_origins(
     os.getenv("ALLOWED_ORIGINS", "http://localhost:3000,http://127.0.0.1:3000")
@@ -46,12 +57,20 @@ ALLOWED_ORIGINS = _split_origins(
 
 PUBLIC_API_PATHS = {
     "/api/health",
+    "/api/health/ready",
     "/api/auth/login",
+    "/api/auth/logout",
+    "/api/auth/refresh",
+    "/api/auth/register",
     "/api/auth/status",
 }
 
 
 def auth_is_configured() -> bool:
+    if AUTH_MODE == "disabled":
+        return True
+    if AUTH_MODE == "users":
+        return tokens_configured()
     return bool(ACCESS_PASSWORD)
 
 
@@ -104,8 +123,11 @@ def _request_token(request: Request) -> str:
     scheme, _, token = authorization.partition(" ")
     if scheme.lower() == "bearer" and token:
         return token.strip()
+    cookie_token = request.cookies.get("daomeng_access", "")
+    if cookie_token:
+        return cookie_token
     # Native EventSource cannot set request headers, so streaming endpoints may
-    # pass the same short-lived token in the query string.
+    # temporarily retain compatibility with older clients that used a query token.
     return request.query_params.get("access_token", "")
 
 
@@ -118,12 +140,18 @@ class SecurityMiddleware(BaseHTTPMiddleware):
         if request.method not in {"POST", "PUT", "PATCH", "DELETE"}:
             return False
         client = request.client.host if request.client else "unknown"
-        key = f"{client}:{request.url.path}"
+        is_auth_attempt = request.url.path in {
+            "/api/auth/login",
+            "/api/auth/register",
+            "/api/auth/refresh",
+        }
+        limit = AUTH_RATE_LIMIT_PER_MINUTE if is_auth_attempt else RATE_LIMIT_PER_MINUTE
+        key = f"{client}:{'auth' if is_auth_attempt else 'mutation'}"
         now = time.monotonic()
         bucket = self._requests[key]
         while bucket and bucket[0] <= now - 60:
             bucket.popleft()
-        if len(bucket) >= RATE_LIMIT_PER_MINUTE:
+        if len(bucket) >= limit:
             return True
         bucket.append(now)
         return False
@@ -158,7 +186,8 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                 except ValueError:
                     pass
 
-        needs_auth = path.startswith("/api/") and path not in PUBLIC_API_PATHS
+        protected_path = path.startswith("/api/") or path.startswith("/code/")
+        needs_auth = protected_path and path not in PUBLIC_API_PATHS
         if AUTH_REQUIRED and needs_auth:
             if not auth_is_configured():
                 return self._with_security_headers(
@@ -167,9 +196,33 @@ class SecurityMiddleware(BaseHTTPMiddleware):
                         status_code=503,
                     )
                 )
-            if not verify_access_token(_request_token(request)):
-                return self._with_security_headers(
-                    JSONResponse({"detail": "登录已失效，请重新登录。"}, status_code=401)
-                )
+            token = _request_token(request)
+            if AUTH_MODE == "shared":
+                if not verify_access_token(token):
+                    return self._with_security_headers(
+                        JSONResponse({"detail": "登录已失效，请重新登录。"}, status_code=401)
+                    )
+            elif AUTH_MODE == "users":
+                try:
+                    claims = decode_access_token(token)
+                    user_id = str(claims.get("sub") or "")
+                    session_id = str(claims.get("sid") or "")
+                    with SessionLocal() as db:
+                        user = validate_session(db, session_id, user_id)
+                    if not user:
+                        raise TokenError("Session is no longer active.")
+                    if path.startswith("/code/") and not asset_path_owned_by(
+                        path[len("/code/"):], user.id
+                    ):
+                        return self._with_security_headers(
+                            JSONResponse({"detail": "资源不存在。"}, status_code=404)
+                        )
+                    request.state.user_id = user.id
+                    request.state.user_role = user.role
+                    request.state.auth_session_id = session_id
+                except (TokenError, ValueError, TypeError):
+                    return self._with_security_headers(
+                        JSONResponse({"detail": "登录已失效，请重新登录。"}, status_code=401)
+                    )
 
         return self._with_security_headers(await call_next(request))

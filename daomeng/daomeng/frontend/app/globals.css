@@ -3,6 +3,7 @@
 :root {
   --background: #ffffff;
   --foreground: #101014;
+  color-scheme: light;
 }
 
 @theme inline {
@@ -18,18 +19,65 @@
 }
 
 body {
-    background-color: var(--background);
-    color: var(--foreground);
+  min-height: 100vh;
+  background-color: var(--background);
+  color: var(--foreground);
+  font-family: "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
+  text-rendering: optimizeLegibility;
 }
 
-/* Custom Scrollbar */
+::selection {
+  background: #c8d8ff;
+  color: #071735;
+}
+
+button,
+a,
+input,
+textarea,
+select {
+  caret-color: #2457d6;
+}
+
+:focus-visible {
+  outline-color: #2457d6;
+  outline-offset: 2px;
+}
+
 ::-webkit-scrollbar {
-    width: 6px;
+  width: 8px;
+  height: 8px;
 }
+
 ::-webkit-scrollbar-track {
-    background: transparent;
+  background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
-    background: #d1d5db;
-    border-radius: 3px;
+  border: 2px solid transparent;
+  border-radius: 999px;
+  background: #aebbd2;
+  background-clip: padding-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #7f91af;
+  background-clip: padding-box;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+@media (max-width: 767px) {
+  .app-shell {
+    --app-sidebar-width: 0px !important;
+  }
 }

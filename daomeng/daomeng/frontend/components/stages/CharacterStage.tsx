@@ -331,8 +331,14 @@ function AssetRow({
 
 /* ─── 主组件 ─── */
 export default function CharacterStage({ state, sessionId, onConfirm, onIntervene, onRegenerate, onUpdateArtifact, onSaveSelections, showConfirm, isRunning, hasPendingItems, hasNextStageStarted }: StageViewProps) {
-  const characters: AssetVersion[] = state.artifact?.characters || [];
-  const settingsData: AssetVersion[] = state.artifact?.settings || [];
+  const characters: AssetVersion[] = React.useMemo(
+    () => state.artifact?.characters || [],
+    [state.artifact?.characters],
+  );
+  const settingsData: AssetVersion[] = React.useMemo(
+    () => state.artifact?.settings || [],
+    [state.artifact?.settings],
+  );
 
   const [editChars, setEditChars] = useState<Record<string, string>>({});
   const [editSets, setEditSets] = useState<Record<string, string>>({});

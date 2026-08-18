@@ -1,9 +1,10 @@
 import copy
 from typing import Any, Dict
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from pydantic import BaseModel, Field
 
+from api.auth_context import request_user_role, require_admin
 from api.logging_config import apply_access_log_setting, apply_log_level_setting
 from config import Config
 
@@ -59,12 +60,22 @@ def _response(config: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 @router.get("/api/config")
-async def get_config():
+async def get_config(request: Request):
+    if request_user_role(request) != "admin":
+        config = Config.as_dict()
+        return {
+            "config": {
+                "project_name": config.get("project_name", "导梦"),
+                "models": config.get("models", {}),
+                "generation": config.get("generation", {}),
+            }
+        }
     return _response(Config.as_dict())
 
 
 @router.put("/api/config")
-async def update_config(req: ConfigUpdateRequest):
+async def update_config(req: ConfigUpdateRequest, request: Request):
+    require_admin(request)
     config = Config.update_config(_merge_without_secrets(Config.as_dict(), req.values))
     apply_log_level_setting()
     apply_access_log_setting()

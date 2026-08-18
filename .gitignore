@@ -2,6 +2,7 @@
 config.yaml
 *.env
 .env*
+!**/.env.example
 
 # Python
 __pycache__/
@@ -20,6 +21,7 @@ code/
 backend/code/
 daomeng/daomeng/backend/code/
 daomeng/daomeng/backend/temp/
+daomeng/daomeng/backend/data/
 
 # System files
 .DS_Store

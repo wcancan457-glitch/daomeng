@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   ArrowRight,
@@ -568,7 +568,7 @@ function PipelineHistory({
   const [manageMode, setManageMode] = useState(false);
   const [deleting, setDeleting] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const records = await fetchPipelineTasks(100);
@@ -576,11 +576,11 @@ function PipelineHistory({
     } finally {
       setLoading(false);
     }
-  };
+  }, [pipeline]);
 
   useEffect(() => {
     load().catch(() => {});
-  }, [pipeline]);
+  }, [load]);
 
   if (!tasks.length) return null;
 
@@ -830,11 +830,14 @@ export default function PipelinePage({ pipeline, title, subtitle }: PipelinePage
     return characterImage.trim() && goodsText.trim();
   }, [pipeline, text, templateMode, selectedTemplate, templateVideoEnabled, promptText, imagePath, videoPath, characterImage, goodsText]);
 
+  const activeTaskId = task?.task_id;
+  const activeTaskStatus = task?.status;
+
   useEffect(() => {
-    if (!task || !['pending', 'running'].includes(task.status)) return;
+    if (!activeTaskId || !activeTaskStatus || !['pending', 'running'].includes(activeTaskStatus)) return;
 
     const refreshTask = async () => {
-      const fresh = await fetchPipelineTask(task.task_id);
+      const fresh = await fetchPipelineTask(activeTaskId);
       setTask(fresh);
       if (!['pending', 'running'].includes(fresh.status)) {
         setRunning(false);
@@ -860,15 +863,15 @@ export default function PipelinePage({ pipeline, title, subtitle }: PipelinePage
     };
 
     return subscribePipelineTask(
-      task.task_id,
+      activeTaskId,
       handleEvent,
       () => {
-        if (task.status === 'pending' || task.status === 'running') {
+        if (activeTaskStatus === 'pending' || activeTaskStatus === 'running') {
           setRunning(false);
         }
       },
     );
-  }, [task?.task_id, task?.status]);
+  }, [activeTaskId, activeTaskStatus]);
 
   useEffect(() => {
     const taskId = searchParams.get('task');

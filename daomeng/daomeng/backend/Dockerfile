@@ -13,4 +13,4 @@ RUN python -m pip install --no-cache-dir --upgrade pip \
 
 COPY . .
 
-CMD ["sh", "-c", "uvicorn api.app:app --host ${HOST:-0.0.0.0} --port ${PORT:-8000}"]
+CMD ["sh", "-c", "alembic upgrade head && uvicorn api.app:app --host ${HOST:-0.0.0.0} --port ${PORT:-8000}"]

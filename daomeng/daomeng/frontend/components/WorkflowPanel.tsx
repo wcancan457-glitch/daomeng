@@ -132,13 +132,16 @@ export default function WorkflowPanel() {
   const [projectParams, setProjectParams] = useState<ProjectParams | null>(null);
   const [autoMode, setAutoMode] = useState(false);
   // 用于顶栏流程图状态判断
-  const [currentStageFromSession, setCurrentStageFromSession] = useState<string | null>(null);
-  const [completedStagesFromSession, setCompletedStagesFromSession] = useState<string[]>([]);
+  const [, setCurrentStageFromSession] = useState<string | null>(null);
+  const [, setCompletedStagesFromSession] = useState<string[]>([]);
 
   const abortRef = useRef<AbortController | null>(null);
   const stoppedRef = useRef(false);
   const autoModeRef = useRef(autoMode);
   const pollRef = useRef<Set<string>>(new Set());
+  const resumeProjectRef = useRef<(sid: string, targetStage?: string | null) => Promise<void>>(
+    async () => undefined,
+  );
 
   useEffect(() => {
     autoModeRef.current = autoMode;
@@ -151,7 +154,8 @@ export default function WorkflowPanel() {
 
   // 清理轮询
   useEffect(() => {
-    return () => { pollRef.current.clear(); };
+    const activePolls = pollRef.current;
+    return () => { activePolls.clear(); };
   }, []);
 
   // 轮询等待后端阶段完成。运行中优先读后端内存，后端重启后再回退到磁盘快照。
@@ -263,7 +267,7 @@ export default function WorkflowPanel() {
     if (sessionParam) {
       // 保存目标阶段，等会话加载完成后再设置
       const targetStage = stageParam && STAGE_ORDER.includes(stageParam) ? stageParam : null;
-      handleResumeProject(sessionParam, targetStage);
+      void resumeProjectRef.current(sessionParam, targetStage);
     }
   }, [searchParams]);
 
@@ -920,7 +924,9 @@ export default function WorkflowPanel() {
         patch = { characters: chars, settings: sets };
       } else if (stageId === 'storyboard') {
         // 分镜阶段：保存 shots 数据（排除 original_shots，只保留 artifact 需要的字段）
-        const { original_shots, ...rest } = selections;
+        const rest = Object.fromEntries(
+          Object.entries(selections).filter(([key]) => key !== 'original_shots'),
+        );
         patch = { ...rest, user_modified: true };
       } else if (stageId === 'reference_generation') {
         const { _editDescs, ...restSelections } = selections;
@@ -1211,6 +1217,7 @@ export default function WorkflowPanel() {
       setActiveStage(STAGE_ORDER[0]);
     }
   };
+  resumeProjectRef.current = handleResumeProject;
 
   // ── 返回首页 ──
   // 处理阶段点击，更新 URL

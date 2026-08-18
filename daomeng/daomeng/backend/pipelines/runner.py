@@ -15,8 +15,8 @@ PIPELINE_REGISTRY = {
 
 
 async def run_pipeline_task(task_id: str, pipeline: str, params: dict) -> None:
-    runner = PIPELINE_REGISTRY[pipeline]
     try:
+        runner = PIPELINE_REGISTRY[pipeline]
         logger.info("Pipeline task started: task_id=%s pipeline=%s", task_id, pipeline)
         mark_running(task_id)
         output, artifacts = await runner(task_id, params)

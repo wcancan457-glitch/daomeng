@@ -7,13 +7,13 @@
 - 支持逐项并发生成、实时预览、重新生成
 """
 
+import asyncio
+import glob
+import logging
 import os
 import re
-import glob
-import asyncio
-import logging
-from typing import Any, Optional, Dict, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional
 
 from .base_agent import AgentInterface
 
@@ -30,7 +30,9 @@ class VideoDirectorAgent(AgentInterface):
 
     @staticmethod
     def _video_base(sid: str) -> str:
-        return os.path.join('code/result/video', str(sid))
+        from config import settings
+
+        return os.path.join(settings.RESULT_DIR, 'video', str(sid))
 
     def _list_versions(self, sid: str, segment_id: str) -> List[str]:
         """列出某个片段视频的所有历史版本"""
@@ -227,7 +229,9 @@ class VideoDirectorAgent(AgentInterface):
             return versions[-1]
 
         # 3. 默认路径
-        return os.path.abspath(os.path.join('code/result/image', str(sid), 'Scenes', f"{segment_id}.jpg"))
+        from config import settings
+
+        return os.path.join(settings.RESULT_DIR, 'image', str(sid), 'Scenes', f"{segment_id}.jpg")
 
     def _get_next_reference_image(self, sid: str, segment_index: int, segments: list, scene_map: dict) -> Optional[str]:
         """首尾帧模式下，优先用下一个片段参考图作为尾帧。"""
@@ -383,7 +387,6 @@ class VideoDirectorAgent(AgentInterface):
     # ─── 核心流程 ───
 
     async def process(self, input_data: Any, intervention: Optional[Dict] = None) -> Dict:
-        from config import settings
         
         input_data = self._merge_session_params(input_data)
         sid = input_data["session_id"]
@@ -437,18 +440,6 @@ class VideoDirectorAgent(AgentInterface):
         character_art = artifacts.get('character_design', {})
         
         style_zh = input_data.get('style') or session_meta.get('style') or 'realistic'
-        # 简单映射为中文显示名
-        style_map_zh = {
-            "anime": "动漫",
-            "realistic": "写实",
-            "cartoon": "卡通",
-            "3d-disney": "3D迪斯尼",
-            "oil-painting": "油画",
-            "chinese-ink": "国画",
-            "comic-book": "美漫",
-            "cyberpunk": "赛博朋克"
-        }
-        style_name = style_map_zh.get(style_zh, style_zh)
         style_prompt = self._get_style_prompt(style_zh)
 
         # ═══ 介入：重新生成指定片段 ═══

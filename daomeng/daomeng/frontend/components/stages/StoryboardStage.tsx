@@ -2,9 +2,7 @@
 
 import React, { useState, useMemo, useCallback } from 'react';
 import { 
-  Plus, Trash2, Film, Clock, MapPin, Users, Edit3, Save, X, 
-  LayoutList, Camera, ChevronDown, ChevronRight,
-  AlertCircle, Clapperboard
+  Plus, Trash2, Film, Clock, MapPin, Users, Save, X, Clapperboard
 } from 'lucide-react';
 import type { StageViewProps } from './types';
 import StageActions from './StageActions';

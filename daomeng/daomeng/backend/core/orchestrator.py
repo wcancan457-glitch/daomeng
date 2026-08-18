@@ -4,6 +4,8 @@
 管理六阶段状态机，协调各智能体执行，支持用户在任意阶段介入
 """
 
+import asyncio
+import copy
 import json
 import logging
 import os
@@ -11,17 +13,16 @@ import re
 import shutil
 import threading
 import time
-import copy
-import asyncio
 from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from accounts.ownership import all_project_payloads, load_project_payload, save_project_payload
 from core.agents import (
-    ScriptWriterAgent,
     CharacterDesignerAgent,
-    StoryboardAgent,
     ReferenceGeneratorAgent,
+    ScriptWriterAgent,
+    StoryboardAgent,
     VideoDirectorAgent,
     VideoEditorAgent,
 )
@@ -150,11 +151,54 @@ class WorkflowEngine:
         self._active_sessions: Set[str] = set()
         self._background_tasks: Set[Any] = set()
         self._state_lock = threading.RLock()
-        self._session_dir = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)), '..', 'code', 'data', 'sessions'
-        )
+        from config import settings
+
+        self._session_dir = settings.SESSION_DIR
         os.makedirs(self._session_dir, exist_ok=True)
         self._load_sessions_from_disk()
+
+    @staticmethod
+    def _state_from_snapshot(data: Dict[str, Any]) -> WorkflowState:
+        session_id = str(data["session_id"])
+        state = WorkflowState(session_id=session_id)
+        try:
+            state.current_stage = WorkflowStage(data.get("current_stage", "init"))
+        except ValueError:
+            state.current_stage = WorkflowStage.INIT
+
+        loaded_status = data.get("status", "pending")
+        if isinstance(loaded_status, str):
+            if loaded_status == "waiting_intervention":
+                loaded_status = "waiting"
+            stages_completed = data.get("stages_completed", [])
+            for stage in WorkflowStage:
+                if stage in {WorkflowStage.INIT, WorkflowStage.COMPLETED}:
+                    continue
+                if stage.value in stages_completed:
+                    state.status[stage.value] = "completed"
+                elif stage.value == state.current_stage.value:
+                    state.status[stage.value] = loaded_status
+                else:
+                    state.status[stage.value] = "pending"
+        elif isinstance(loaded_status, dict):
+            state.status = loaded_status
+
+        state.artifacts = data.get("artifacts", {})
+        state.stage_progress = data.get("stage_progress", {})
+        state.error = data.get("error")
+        state.updated_at = data.get("updated_at", 0)
+        state.meta = _extract_session_meta(data)
+        interrupted = [stage for stage, status in state.status.items() if status == "running"]
+        for stage in interrupted:
+            state.status[stage] = "pending"
+            state.stage_progress[stage] = {
+                "step": "服务重启后等待重新执行",
+                "message": "上次执行被服务重启中断，请重新执行当前阶段。",
+                "updated_at": time.time(),
+            }
+        if interrupted:
+            state.error = "上次执行被服务重启中断，请重新执行当前阶段。"
+        return state
 
     def get_or_create_state(self, session_id: str) -> WorkflowState:
         with self._state_lock:
@@ -171,6 +215,15 @@ class WorkflowEngine:
             # 先从内存中获取
             if session_id in self.sessions:
                 return self.sessions[session_id]
+
+            database_data = load_project_payload(session_id)
+            if database_data:
+                try:
+                    state = self._state_from_snapshot(database_data)
+                    self.sessions[session_id] = state
+                    return state
+                except Exception as exc:
+                    logger.warning("Failed to load session %s from database: %s", session_id, exc)
 
             # 内存中没有，从磁盘加载
             path = os.path.join(self._session_dir, f"{session_id}.json")
@@ -1064,7 +1117,7 @@ class WorkflowEngine:
         return {
             "status": "error",
             "openclaw": f"当前状态 {current_status} 不允许继续，请检查会话状态。",
-            "message": f"当前状态不允许继续",
+            "message": "当前状态不允许继续",
             "current_status": current_status,
         }
 
@@ -1269,10 +1322,14 @@ class WorkflowEngine:
         filename: str = "",
     ) -> Dict[str, Any]:
         """Save a user-provided image and attach it to the target artifact item."""
+        from PIL import Image, UnidentifiedImageError
+
         allowed_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
         ext = os.path.splitext(filename or "")[1].lower() or ".png"
         if ext not in allowed_exts:
             raise ValueError(f"仅支持 {', '.join(sorted(allowed_exts))} 格式的图片")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", item_id):
+            raise ValueError("素材 ID 格式无效")
 
         with self._state_lock:
             state = self.get_state(session_id)
@@ -1282,9 +1339,31 @@ class WorkflowEngine:
             cfg = self._upload_item_config(stage, item_type, item_id)
             absolute_path, relative_path = self._next_upload_path(session_id, cfg, ext)
             try:
+                max_bytes = max(
+                    1024 * 1024,
+                    int(os.getenv("MAX_UPLOAD_BYTES", str(25 * 1024 * 1024))),
+                )
+            except (TypeError, ValueError):
+                max_bytes = 25 * 1024 * 1024
+            try:
                 with open(absolute_path, "wb") as buffer:
-                    shutil.copyfileobj(file_obj, buffer)
+                    written = 0
+                    while chunk := file_obj.read(1024 * 1024):
+                        written += len(chunk)
+                        if written > max_bytes:
+                            raise ValueError("上传内容超过大小限制。")
+                        buffer.write(chunk)
+                if written == 0:
+                    raise ValueError("上传图片不能为空。")
+                with Image.open(absolute_path) as image:
+                    image.verify()
+            except (ValueError, UnidentifiedImageError) as exc:
+                if os.path.exists(absolute_path):
+                    os.remove(absolute_path)
+                raise ValueError(f"上传图片无效：{exc}") from exc
             except Exception as exc:
+                if os.path.exists(absolute_path):
+                    os.remove(absolute_path)
                 raise RuntimeError(f"图片保存失败: {exc}") from exc
 
             artifact = state.artifacts.setdefault(stage, {})
@@ -1346,15 +1425,15 @@ class WorkflowEngine:
         version = f"v{max_version + 1}"
         upload_filename = f"{cfg['base']}_upload_{version}{ext}"
         absolute_path = os.path.join(save_dir, upload_filename)
-        relative_path = os.path.relpath(absolute_path, settings.BASE_DIR)
+        relative_path = os.path.join("code", os.path.relpath(absolute_path, settings.CODE_DIR))
         return absolute_path, relative_path
 
     # ──────────── 会话持久化 ────────────
 
     def save_session_to_disk(self, session_id: str, meta: Dict = None):
         """保存 / 更新会话到磁盘（原子写入）"""
-        import tempfile
         import shutil
+        import tempfile
 
         with self._state_lock:
             path = os.path.join(self._session_dir, f"{session_id}.json")
@@ -1406,6 +1485,8 @@ class WorkflowEngine:
                 with os.fdopen(fd, 'w', encoding='utf-8') as f:
                     json.dump(data, f, ensure_ascii=False, indent=2)
                 shutil.move(tmp_path, path)
+                owner_id = str((data.get("meta") or {}).get("user_id") or "legacy-shared")
+                save_project_payload(session_id, owner_id, data)
                 logger.info(f"[Orchestrator] Session {session_id} saved successfully.")
             except Exception as e:
                 if os.path.exists(tmp_path):
@@ -1415,6 +1496,12 @@ class WorkflowEngine:
 
     def _load_sessions_from_disk(self):
         """启动时从磁盘加载所有已保存的会话"""
+        for data in all_project_payloads():
+            try:
+                state = self._state_from_snapshot(data)
+                self.sessions[state.session_id] = state
+            except Exception as exc:
+                logger.warning("Failed to restore database session snapshot: %s", exc)
         if not os.path.exists(self._session_dir):
             return
         for filename in os.listdir(self._session_dir):
@@ -1425,6 +1512,8 @@ class WorkflowEngine:
                 with open(fpath, 'r', encoding='utf-8') as f:
                     data = json.load(f)
                 sid = data["session_id"]
+                if sid in self.sessions:
+                    continue
                 state = WorkflowState(sid)
                 try:
                     state.current_stage = WorkflowStage(data.get("current_stage", "init"))
@@ -1464,8 +1553,9 @@ class WorkflowEngine:
 
     def delete_session(self, session_id: str) -> bool:
         """删除指定会话（内存 + 磁盘 + 结果文件）"""
-        from config import settings
         import shutil
+
+        from config import settings
 
         with self._state_lock:
             if session_id in self._active_sessions:
@@ -1628,13 +1718,16 @@ class WorkflowEngine:
                         count += 1
         return count
 
-    def list_saved_sessions(self) -> List[Dict]:
+    def list_saved_sessions(self, user_id: Optional[str] = None) -> List[Dict]:
         """列出所有已保存的会话概要"""
         with self._state_lock:
             sessions: List[Dict] = []
             for sid, state in self.sessions.items():
                 try:
                     meta = copy.deepcopy(state.meta)
+                    owner_id = str(meta.get("user_id") or "legacy-shared")
+                    if user_id and owner_id != user_id:
+                        continue
                     artifacts = copy.deepcopy(state.artifacts)
                     script_artifact = artifacts.get("script_generation", {})
                     title = (

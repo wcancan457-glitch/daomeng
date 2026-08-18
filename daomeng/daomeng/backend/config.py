@@ -320,9 +320,10 @@ class Config:
     STYLE = _get(CONFIG, "generation.style")
 
     BASE_DIR = str(BASE_DIR)
-    CODE_DIR = os.path.join(BASE_DIR, "code")
+    RUNTIME_DATA_DIR = os.path.abspath(os.getenv("RUNTIME_DATA_DIR", BASE_DIR))
+    CODE_DIR = os.path.join(RUNTIME_DATA_DIR, "code")
     RESULT_DIR = os.path.join(CODE_DIR, "result")
-    TEMP_DIR = os.path.join(BASE_DIR, "temp")
+    TEMP_DIR = os.path.join(RUNTIME_DATA_DIR, "temp")
     SESSION_DIR = os.path.join(CODE_DIR, "data", "sessions")
     TASK_DIR = os.path.join(CODE_DIR, "data", "tasks")
     TASK_RESULT_DIR = os.path.join(RESULT_DIR, "task")

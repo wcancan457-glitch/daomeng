@@ -6,17 +6,18 @@
 图片以 character_id / setting_id 命名
 """
 
+import asyncio
+import glob
+import json
+import logging
 import os
 import re
-import json
-import glob
-import asyncio
-import logging
-from typing import Any, Optional, Dict, List
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional
+
+from prompts.loader import load_prompt
 
 from .base_agent import AgentInterface
-from prompts.loader import load_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +80,9 @@ class CharacterDesignerAgent(AgentInterface):
 
     @staticmethod
     def _asset_base(sid: str) -> str:
-        return os.path.join('code/result/image', str(sid), 'Assets')
+        from config import settings
+
+        return os.path.join(settings.RESULT_DIR, 'image', str(sid), 'Assets')
 
     def _list_versions(self, sid: str, asset_type: str, asset_id: str) -> List[str]:
         """列出某个素材的所有历史版本文件路径，按时间排序
@@ -289,7 +292,7 @@ class CharacterDesignerAgent(AgentInterface):
                 if json_match:
                     eval_result = json.loads(json_match.group())
                     return eval_result
-            except:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 pass
 
             return {"score": 5, "issues": ["评估解析失败"], "is_acceptable": True}
@@ -301,8 +304,8 @@ class CharacterDesignerAgent(AgentInterface):
     def _select_best_with_vlm(self, image_paths: List[str], name: str, description: str,
                                asset_type: str, species: str = "", vlm_model: str = "qwen3.5-plus") -> tuple:
         """使用 VLM 从多个版本中选择最好的一张"""
+
         from models.vlm_client import VLM
-        import re
 
         if not image_paths:
             return None, None

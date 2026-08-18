@@ -7,9 +7,12 @@ import { assetUrl } from './utils';
 import StageProgress from './StageProgress';
 import StageActions from './StageActions';
 
-export default function PostProductionStage({ state, onConfirm, onRegenerate, showConfirm, isRunning, hasPendingItems, hasNextStageStarted, artifacts, scriptArtifact }: StageViewProps) {
+export default function PostProductionStage({ state, onConfirm, onRegenerate, isRunning, hasPendingItems, hasNextStageStarted, artifacts, scriptArtifact }: StageViewProps) {
   // 提取最终视频列表
-  const finalVideos: any[] = state.artifact?.final_videos || [];
+  const finalVideos: any[] = React.useMemo(
+    () => state.artifact?.final_videos || [],
+    [state.artifact?.final_videos],
+  );
   
   // 兼容旧格式及其变形
   const legacyVideo = state.artifact?.final_video;

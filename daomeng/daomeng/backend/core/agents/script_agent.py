@@ -3,16 +3,16 @@
 阶段1: 编剧智能体 (直出一遍过版本)
 """
 
+import asyncio
+import json
+import logging
 import os
 import re
-import json
-import asyncio
-import logging
-from functools import partial
 from datetime import datetime, timezone
-from typing import Any, Optional, Dict, List
+from typing import Any, Dict, List, Optional
 
 from prompts.loader import load_prompt_with_fallback
+
 from .base_agent import AgentInterface
 
 logger = logging.getLogger(__name__)
@@ -185,7 +185,6 @@ class ScriptWriterAgent(AgentInterface):
             sid = input_data.get("session_id", "")
             if isinstance(modified, str):
                 modified = self._extract_json_from_text(modified) or {}
-            is_zh = any('\u4e00' <= c <= '\u9fff' for c in modified.get("title", ""))
             modified["session_id"] = sid
             # 【优化】移除手动调用 self._save_result，依靠 Orchestrator 自动保存
             return {"payload": modified, "requires_intervention": False, "stage_completed": True}
@@ -212,7 +211,7 @@ class ScriptWriterAgent(AgentInterface):
                 result_payload["new_settings"] = new_settings
                 result_payload["new_episodes"] = new_ep_list
 
-                logger.info(f"[ScriptWriter] Confirmed continuation. Providing incremental data to Orchestrator.")
+                logger.info("[ScriptWriter] Confirmed continuation. Providing incremental data to Orchestrator.")
                 return {"payload": result_payload, "requires_intervention": False, "stage_completed": True}
 
             # 处理 delete_continue 的情况，直接丢弃新增内容，保持原有剧本数据不变
@@ -229,7 +228,6 @@ class ScriptWriterAgent(AgentInterface):
             episodes_to_add = intervention.get("episodes_to_add", 1)
             sequel_idea = intervention.get("sequel_idea", "").strip()
 
-            from config import settings as app_settings
             from models.llm_client import LLM
             llm = LLM()
 
@@ -242,6 +240,9 @@ class ScriptWriterAgent(AgentInterface):
             existing_episodes_text = json.dumps(input_data.get("episodes", []), ensure_ascii=False)
             existing_chars_text = json.dumps(input_data.get("characters", []), ensure_ascii=False)
             existing_settings_text = json.dumps(input_data.get("settings", []), ensure_ascii=False)
+            # The continuation drafting prompt currently exists in Chinese only,
+            # so its evaluation and revision prompts must use the same language.
+            is_zh = True
             
             last_episode_num = 0
             if input_data.get("episodes"):
@@ -482,9 +483,6 @@ class ScriptWriterAgent(AgentInterface):
                 c["character_id"] = c.get("character_id") or self._gen_id("char")
             for s in all_settings:
                 s["setting_id"] = s.get("setting_id") or self._gen_id("set")
-
-            asset_chars_str = json.dumps([{"name": c.get("name"), "description": c.get("description"), "role": c.get("role")} for c in all_characters], ensure_ascii=False)
-            asset_sets_str = json.dumps([{"name": s.get("name"), "description": s.get("description")} for s in all_settings], ensure_ascii=False)
 
             # 3. 解析各集数据 - 针对新版数组输出格式进行优化
             _log_progress(80, "开始结构化全集数据...")

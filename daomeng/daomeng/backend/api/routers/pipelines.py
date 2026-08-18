@@ -2,12 +2,14 @@ import base64
 import os
 import re
 from html import escape
-from urllib.parse import quote
 from typing import Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, StreamingResponse
 
+from api.auth_context import request_user_id
+from api.routers.files import resolve_uploaded_media_params
 from api.schemas.pipelines import (
     ActionTransferPipelineRequest,
     DigitalHumanPipelineRequest,
@@ -18,8 +20,9 @@ from config import BASE_DIR
 from models.config_model import get_models_by_type, model_type_capabilities
 from pipelines.api_media import list_api_workflows
 from pipelines.events import task_event_stream
-from pipelines.runner import PIPELINE_REGISTRY, run_pipeline_task
-from pipelines.storage import create_task, delete_task, list_tasks, load_task
+from pipelines.queue_worker import pipeline_queue
+from pipelines.runner import PIPELINE_REGISTRY
+from pipelines.storage import TaskQuotaError, create_task, delete_task, list_tasks, load_task
 from pipelines.utils import TEMPLATE_FIELD_DEFAULTS, template_custom_fields, template_media_spec
 
 router = APIRouter(tags=["Pipelines"])
@@ -93,11 +96,21 @@ def _render_preview_html(raw: str) -> str:
     return re.sub(r"\{\{\s*([^{}]+?)\s*\}\}", repl, raw)
 
 
-def _start_task(background_tasks: BackgroundTasks, pipeline: str, params: dict):
+def _start_task(
+    pipeline: str,
+    params: dict,
+    user_id: str,
+):
     if pipeline not in PIPELINE_REGISTRY:
         raise HTTPException(404, f"Pipeline not found: {pipeline}")
-    metadata = create_task(pipeline=pipeline, input_params=params)
-    background_tasks.add_task(run_pipeline_task, metadata["task_id"], pipeline, params)
+    try:
+        params = resolve_uploaded_media_params(params, user_id)
+        metadata = create_task(pipeline=pipeline, input_params=params, user_id=user_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except TaskQuotaError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
+    pipeline_queue.notify()
     return {
         "task_id": metadata["task_id"],
         "pipeline": pipeline,
@@ -244,49 +257,74 @@ async def preview_standard_template(size: str, filename: str):
 
 
 @router.post("/api/pipelines/standard/tasks")
-async def start_standard_pipeline(req: StandardPipelineRequest, background_tasks: BackgroundTasks):
-    return _start_task(background_tasks, "standard", req.model_dump(exclude_none=True))
+async def start_standard_pipeline(
+    req: StandardPipelineRequest,
+    request: Request,
+):
+    return _start_task(
+        "standard",
+        req.model_dump(exclude_none=True),
+        request_user_id(request),
+    )
 
 
 @router.post("/api/pipelines/action_transfer/tasks")
-async def start_action_transfer_pipeline(req: ActionTransferPipelineRequest, background_tasks: BackgroundTasks):
-    return _start_task(background_tasks, "action_transfer", req.model_dump(exclude_none=True))
+async def start_action_transfer_pipeline(
+    req: ActionTransferPipelineRequest,
+    request: Request,
+):
+    return _start_task(
+        "action_transfer",
+        req.model_dump(exclude_none=True),
+        request_user_id(request),
+    )
 
 
 @router.post("/api/pipelines/digital_human/tasks")
-async def start_digital_human_pipeline(req: DigitalHumanPipelineRequest, background_tasks: BackgroundTasks):
-    return _start_task(background_tasks, "digital_human", req.model_dump(exclude_none=True))
+async def start_digital_human_pipeline(
+    req: DigitalHumanPipelineRequest,
+    request: Request,
+):
+    return _start_task(
+        "digital_human",
+        req.model_dump(exclude_none=True),
+        request_user_id(request),
+    )
 
 
 @router.post("/api/pipelines/{pipeline}/tasks")
-async def start_generic_pipeline(pipeline: str, req: GenericPipelineRequest, background_tasks: BackgroundTasks):
+async def start_generic_pipeline(
+    pipeline: str,
+    req: GenericPipelineRequest,
+    request: Request,
+):
     normalized = "standard" if pipeline == "quick_create" else pipeline
-    return _start_task(background_tasks, normalized, req.params)
+    return _start_task(normalized, req.params, request_user_id(request))
 
 
 @router.get("/api/tasks")
-async def get_tasks(limit: int = Query(100, ge=1, le=500)):
-    return {"tasks": list_tasks(limit=limit)}
+async def get_tasks(request: Request, limit: int = Query(100, ge=1, le=500)):
+    return {"tasks": list_tasks(limit=limit, user_id=request_user_id(request))}
 
 
 @router.get("/api/tasks/{task_id}")
-async def get_task(task_id: str):
-    metadata = load_task(task_id)
+async def get_task(task_id: str, request: Request):
+    metadata = load_task(task_id, user_id=request_user_id(request))
     if not metadata:
         raise HTTPException(404, "Task not found")
     return metadata
 
 
 @router.delete("/api/tasks/{task_id}")
-async def remove_task(task_id: str):
-    if not delete_task(task_id):
+async def remove_task(task_id: str, request: Request):
+    if not delete_task(task_id, user_id=request_user_id(request)):
         raise HTTPException(404, "Task not found")
     return {"success": True}
 
 
 @router.get("/api/tasks/{task_id}/events")
-async def subscribe_task_events(task_id: str):
-    metadata = load_task(task_id)
+async def subscribe_task_events(task_id: str, request: Request):
+    metadata = load_task(task_id, user_id=request_user_id(request))
     if not metadata:
         raise HTTPException(404, "Task not found")
     initial_event = {

@@ -1,7 +1,7 @@
 'use client';
 
-import { useState, useEffect, useRef, DragEvent } from 'react';
-import { Sparkles, Image, Video, MessageSquare, Zap, Loader2, Copy, Check, Trash2, X, FolderOpen, Upload, Globe, Hexagon } from 'lucide-react';
+import { useCallback, useState, useEffect, useRef, DragEvent } from 'react';
+import { Sparkles, Image as ImageIcon, Video, MessageSquare, Zap, Loader2, Copy, Check, Trash2, X, FolderOpen, Upload, Globe, Hexagon } from 'lucide-react';
 import { useSearchParams } from 'next/navigation';
 import type { ModelOption, ProviderGroup } from '@/config/models';
 import BrandHeader from '@/components/BrandHeader';
@@ -57,7 +57,7 @@ interface Tool {
 
 const tools: Tool[] = [
   { id: 'llm', name: 'LLM 对话', description: '文字生成', icon: <MessageSquare className="w-5 h-5" /> },
-  { id: 'vlm', name: '图片理解', description: '分析图片内容', icon: <Image className="w-5 h-5" /> },
+  { id: 'vlm', name: '图片理解', description: '分析图片内容', icon: <ImageIcon className="w-5 h-5" /> },
   { id: 't2i', name: '文生图', description: '文字生成图片', icon: <Sparkles className="w-5 h-5" /> },
   { id: 'i2i', name: '图生图', description: '图片风格转换', icon: <Zap className="w-5 h-5" /> },
   { id: 'video', name: '视频生成', description: '图生视频/文生视频', icon: <Video className="w-5 h-5" /> },
@@ -327,12 +327,15 @@ export default function SandboxPage() {
 
   const flattenModels = (groups: ProviderGroup[]): ModelOption[] => groups.flatMap(group => group.models);
 
-  const getModels = () => flattenModels(modelGroups[activeTool] || []);
+  const getModels = useCallback(
+    () => flattenModels(modelGroups[activeTool] || []),
+    [activeTool, modelGroups],
+  );
 
-  const firstModelId = (groups: ProviderGroup[]) => {
+  const firstModelId = useCallback((groups: ProviderGroup[]) => {
     const models = flattenModels(groups);
     return models.find(model => model.default)?.id || models[0]?.id || '';
-  };
+  }, []);
 
   const [selectedModel, setSelectedModel] = useState('');
   const [webSearch, setWebSearch] = useState(false);
@@ -367,11 +370,11 @@ export default function SandboxPage() {
         if (cancelled) return;
         const groups = { llm, vlm, t2i, i2i, video };
         setModelGroups(groups);
-        setSelectedModel(current => current || firstModelId(groups[activeTool]));
+        setSelectedModel(current => current || firstModelId(groups.llm));
       })
       .catch(() => {});
     return () => { cancelled = true; };
-  }, []);
+  }, [firstModelId]);
 
   const applyRecord = (record: HistoryRecord) => {
     setSelectedRecord(record);
@@ -474,7 +477,7 @@ export default function SandboxPage() {
     if (!currentInList) {
       setSelectedModel(models.find(m => m.default)?.id || models[0]?.id || '');
     }
-  }, [activeTool, modelGroups, selectedModel]);
+  }, [getModels, selectedModel]);
 
   // 检查是否可以提交
   const canSubmit = () => {
@@ -494,7 +497,7 @@ export default function SandboxPage() {
 
     try {
       let apiUrl = '';
-      let body: Record<string, unknown> = {
+      const body: Record<string, unknown> = {
         model: selectedModel,
         prompt: prompt,
       };

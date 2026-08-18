@@ -4,12 +4,12 @@
 拼接用户在阶段5选定的视频片段 → 最终成片
 """
 
-import os
-import re
 import asyncio
 import logging
+import os
+import re
 import subprocess
-from typing import Any, Optional, Dict
+from typing import Any, Dict, Optional
 
 from .base_agent import AgentInterface
 
@@ -46,7 +46,9 @@ class VideoEditorAgent(AgentInterface):
         self._report_progress("后期制作", "准备视频片段...", 5)
 
         def run():
-            video_dir = os.path.join('code/result/video', str(sid))
+            from config import settings
+
+            video_dir = os.path.join(settings.RESULT_DIR, 'video', str(sid))
             os.makedirs(video_dir, exist_ok=True)
             output_dir = os.path.join(video_dir, 'output')
             os.makedirs(output_dir, exist_ok=True)
@@ -121,7 +123,7 @@ class VideoEditorAgent(AgentInterface):
                 
                 logger.info(f"[{sid}] Running ffmpeg for Ep {ep_idx}: {cmd}")
                 try:
-                    result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+                    subprocess.run(cmd, capture_output=True, text=True, check=True)
                 except subprocess.CalledProcessError as e:
                     logger.error(f"FFmpeg failed with exit code {e.returncode}")
                     logger.error(f"FFmpeg stderr: {e.stderr}")

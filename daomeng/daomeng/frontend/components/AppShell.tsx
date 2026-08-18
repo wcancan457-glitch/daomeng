@@ -3,11 +3,12 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
-import { CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock, Hexagon, Home, Loader2, Repeat2, Settings, Trash2, UserRound, LogOut } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock, Hexagon, Home, Loader2, Repeat2, Settings, Trash2, UserRound, LogOut, Menu, Sparkles, X } from 'lucide-react';
 import clsx from 'clsx';
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { clearTempCache, fetchPipelineTasks, fetchSandboxTasks, fetchSessions, type PipelineTask, type SandboxTask } from '@/lib/workflowApi';
-import { clearAccessToken } from '@/lib/auth';
+import { logoutAccount } from '@/lib/auth';
+import { useAuth } from '@/components/AuthGate';
 
 const NAV_ITEMS = [
   { href: '/', label: '导梦', icon: Home },
@@ -240,7 +241,7 @@ function SidebarTaskPanels({ currentPath }: { currentPath: string }) {
   const [dismissedCompleted, setDismissedCompleted] = useState<Set<string>>(() => loadDismissedCompletedTasks());
   const [loading, setLoading] = useState(false);
 
-  const load = async () => {
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const [pipelineRecords, sessions, sandboxRecords] = await Promise.all([
@@ -260,13 +261,13 @@ function SidebarTaskPanels({ currentPath }: { currentPath: string }) {
     } finally {
       setLoading(false);
     }
-  };
+  }, [dismissedCompleted]);
 
   useEffect(() => {
     load().catch(() => {});
     const timer = window.setInterval(() => load().catch(() => {}), 3000);
     return () => window.clearInterval(timer);
-  }, [dismissedCompleted]);
+  }, [load]);
 
   const handleRunningClick = (task: RunningTaskItem) => {
     router.push(task.href);
@@ -307,17 +308,27 @@ function SidebarTaskPanels({ currentPath }: { currentPath: string }) {
 export default function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const router = useRouter();
+  const { status: authStatus, user } = useAuth();
   const [open, setOpen] = useState(false);
   const [settingsMenuOpen, setSettingsMenuOpen] = useState(false);
   const [clearingCache, setClearingCache] = useState(false);
+  const [loggingOut, setLoggingOut] = useState(false);
+  const [showWelcome, setShowWelcome] = useState(false);
+
+  const canManageSettings = authStatus?.mode !== 'users' || user?.role === 'admin';
 
   useEffect(() => {
-    setOpen(loadSidebarOpen());
+    setOpen(window.innerWidth >= 768 && loadSidebarOpen());
+    setShowWelcome(window.localStorage.getItem('daomeng.show-welcome') === 'true');
   }, []);
+
+  useEffect(() => {
+    if (!canManageSettings && pathname.startsWith('/settings')) router.replace('/');
+  }, [canManageSettings, pathname, router]);
 
   const setSidebarOpen = (nextOpen: boolean) => {
     setOpen(nextOpen);
-    saveSidebarOpen(nextOpen);
+    if (window.innerWidth >= 768) saveSidebarOpen(nextOpen);
   };
 
   const handleClearCache = async () => {
@@ -333,18 +344,67 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     }
   };
 
+  const handleLogout = async () => {
+    setLoggingOut(true);
+    await logoutAccount().catch(() => undefined);
+    router.replace('/');
+    router.refresh();
+  };
+
+  const dismissWelcome = () => {
+    window.localStorage.removeItem('daomeng.show-welcome');
+    setShowWelcome(false);
+  };
+
   return (
     <div
-      className="min-h-screen bg-gray-50 text-gray-800"
+      className="app-shell min-h-screen bg-gray-50 text-gray-800"
       style={{ '--app-sidebar-width': open ? '15rem' : '0px' } as CSSProperties}
     >
+      {showWelcome && (
+        <div
+          className="fixed right-4 top-4 z-[70] w-[calc(100%-2rem)] max-w-sm rounded-2xl bg-[#0b1d43] p-5 text-white shadow-[0_20px_48px_-24px_rgba(11,29,67,0.9)]"
+          role="status"
+        >
+          <button
+            type="button"
+            onClick={dismissWelcome}
+            className="absolute right-3 top-3 flex h-8 w-8 items-center justify-center rounded-lg text-blue-100 hover:bg-white/10 hover:text-white focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+            aria-label="关闭欢迎提示"
+          >
+            <X className="h-4 w-4" />
+          </button>
+          <Sparkles className="h-5 w-5 text-[#9bb9ff]" />
+          <p className="mt-4 text-lg font-semibold">账号创建成功</p>
+          <p className="mt-1 pr-5 text-sm leading-6 text-blue-100">
+            你的项目和生成记录会保存在当前账号下。现在可以从一个创意开始第一条影像。
+          </p>
+          <button
+            type="button"
+            onClick={dismissWelcome}
+            className="mt-4 h-9 rounded-lg bg-white px-4 text-sm font-medium text-[#0b1d43] hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white"
+          >
+            开始创作
+          </button>
+        </div>
+      )}
+
+      {open && (
+        <button
+          type="button"
+          className="fixed inset-0 z-30 bg-slate-950/35 md:hidden"
+          onClick={() => setSidebarOpen(false)}
+          aria-label="关闭导航"
+        />
+      )}
+
       <aside
         className={clsx(
-          'fixed inset-y-0 left-0 z-40 border-r border-gray-200 bg-white shadow-sm transition-all duration-300',
-          open ? 'w-60' : 'w-0 border-r-0'
+          'fixed inset-y-0 left-0 z-40 w-60 border-r border-gray-200 bg-white shadow-[12px_0_36px_-28px_rgba(15,23,42,0.45)] transition-transform duration-300',
+          open ? 'translate-x-0' : '-translate-x-full'
         )}
       >
-        <div className={clsx('flex h-full flex-col overflow-hidden transition-opacity duration-200', open ? 'opacity-100' : 'opacity-0')}>
+        <div className="flex h-full flex-col overflow-hidden">
           <div className="flex h-16 items-center px-4 border-b border-gray-100">
             <div className="flex items-center gap-2 min-w-0">
               <Image
@@ -356,6 +416,14 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
               />
               <span className="text-sm font-semibold text-gray-800 truncate">导梦</span>
             </div>
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(false)}
+              className="ml-auto flex h-9 w-9 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-900 md:hidden"
+              aria-label="关闭导航"
+            >
+              <X className="h-4 w-4" />
+            </button>
           </div>
           <nav className="min-h-0 flex-1 overflow-y-auto p-3 space-y-1">
             {NAV_ITEMS.map(item => {
@@ -365,6 +433,9 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                 <Link
                   key={item.href}
                   href={item.href}
+                  onClick={() => {
+                    if (window.innerWidth < 768) setSidebarOpen(false);
+                  }}
                   className={clsx(
                     'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
                     active
@@ -380,63 +451,59 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
           </nav>
           <SidebarTaskPanels currentPath={pathname} />
           <div className="relative border-t border-gray-100 p-3">
-            {(() => {
-              const Icon = SETTINGS_ITEM.icon;
-              const active = pathname.startsWith(SETTINGS_ITEM.href);
-              return (
-                <>
-                  {settingsMenuOpen && (
-                    <div className="absolute bottom-[62px] left-3 right-3 rounded-xl border border-gray-200 bg-white p-2 shadow-lg">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setSettingsMenuOpen(false);
-                          router.push(SETTINGS_ITEM.href);
-                        }}
-                        className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium text-gray-600 hover:bg-blue-50 hover:text-blue-600"
-                      >
-                        <Settings className="h-4 w-4" />
-                        修改配置
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => handleClearCache()}
-                        disabled={clearingCache}
-                        className="mt-1 flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium text-gray-600 hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-60"
-                      >
-                        {clearingCache ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                        清空缓存
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          clearAccessToken();
-                          setSettingsMenuOpen(false);
-                          window.location.reload();
-                        }}
-                        className="mt-1 flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium text-gray-600 hover:bg-gray-100 hover:text-gray-900"
-                      >
-                        <LogOut className="h-4 w-4" />
-                        ????
-                      </button>
-                    </div>
-                  )}
-                  <button
-                    type="button"
-                    onClick={() => setSettingsMenuOpen(value => !value)}
-                  className={clsx(
-                    'flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
-                    active || settingsMenuOpen
-                      ? 'bg-blue-50 text-blue-600'
-                      : 'text-gray-500 hover:bg-gray-50 hover:text-gray-800'
-                  )}
+            {canManageSettings && settingsMenuOpen && (
+              <div className="absolute bottom-[76px] left-3 right-3 rounded-xl bg-white p-2 shadow-[0_16px_40px_-22px_rgba(15,23,42,0.65)] ring-1 ring-gray-200">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setSettingsMenuOpen(false);
+                    router.push(SETTINGS_ITEM.href);
+                  }}
+                  className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-2 focus-visible:outline-blue-600"
                 >
-                  <Icon className="w-4 h-4 flex-shrink-0" />
-                  <span className="truncate">{SETTINGS_ITEM.label}</span>
-                  </button>
-                </>
-              );
-            })()}
+                  <Settings className="h-4 w-4" />
+                  修改配置
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleClearCache()}
+                  disabled={clearingCache}
+                  className="mt-1 flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-700 focus-visible:outline-2 focus-visible:outline-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {clearingCache ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+                  清空缓存
+                </button>
+              </div>
+            )}
+
+            <div className="flex items-center gap-2">
+              <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#e6edff] text-xs font-semibold text-[#254fbd]">
+                {(user?.display_name || user?.email || '导梦').slice(0, 1).toUpperCase()}
+              </div>
+              <button
+                type="button"
+                onClick={() => canManageSettings && setSettingsMenuOpen(value => !value)}
+                className="min-w-0 flex-1 rounded-lg px-1 py-1 text-left focus-visible:outline-2 focus-visible:outline-blue-600"
+                aria-expanded={canManageSettings ? settingsMenuOpen : undefined}
+              >
+                <span className="block truncate text-xs font-medium text-gray-800">
+                  {user?.display_name || user?.email || '受保护模式'}
+                </span>
+                <span className="block truncate text-[11px] text-gray-500">
+                  {user ? (user.role === 'admin' ? '管理员' : user.email) : '共享访问'}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleLogout()}
+                disabled={loggingOut}
+                className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-blue-600 disabled:opacity-50"
+                aria-label="退出登录"
+                title="退出登录"
+              >
+                {loggingOut ? <Loader2 className="h-4 w-4 animate-spin" /> : <LogOut className="h-4 w-4" />}
+              </button>
+            </div>
           </div>
         </div>
       </aside>
@@ -444,26 +511,37 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {open && (
         <button
           onClick={() => setSidebarOpen(false)}
-          className="fixed left-60 top-1/2 z-50 h-14 w-7 -translate-y-1/2 rounded-r-xl border border-l-0 border-gray-200 bg-white text-gray-400 shadow-sm hover:w-9 hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50 flex items-center justify-center transition-all"
+          className="fixed left-60 top-1/2 z-50 hidden h-14 w-7 -translate-y-1/2 items-center justify-center rounded-r-xl border border-l-0 border-gray-200 bg-white text-gray-500 shadow-[6px_8px_18px_-14px_rgba(15,23,42,0.7)] transition-all hover:w-9 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 md:flex"
           title="收起侧边栏"
+          aria-label="收起侧边栏"
         >
           <ChevronLeft className="w-4 h-4" />
         </button>
       )}
 
       {!open && (
-        <button
-          onClick={() => setSidebarOpen(true)}
-          className="fixed left-0 top-1/2 z-50 h-14 w-7 -translate-y-1/2 rounded-r-xl border border-l-0 border-gray-200 bg-white text-gray-400 shadow-sm hover:w-9 hover:text-blue-600 hover:border-blue-200 hover:bg-blue-50 flex items-center justify-center transition-all"
-          title="打开侧边栏"
-        >
-          <ChevronRight className="w-4 h-4" />
-        </button>
+        <>
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="fixed left-0 top-1/2 z-50 hidden h-14 w-7 -translate-y-1/2 items-center justify-center rounded-r-xl border border-l-0 border-gray-200 bg-white text-gray-500 shadow-[6px_8px_18px_-14px_rgba(15,23,42,0.7)] transition-all hover:w-9 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 md:flex"
+            title="打开侧边栏"
+            aria-label="打开侧边栏"
+          >
+            <ChevronRight className="w-4 h-4" />
+          </button>
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="fixed left-3 top-3 z-50 flex h-10 w-10 items-center justify-center rounded-xl bg-white text-slate-700 shadow-[0_10px_24px_-14px_rgba(15,23,42,0.7)] ring-1 ring-slate-200 hover:bg-slate-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 md:hidden"
+            aria-label="打开导航"
+          >
+            <Menu className="h-5 w-5" />
+          </button>
+        </>
       )}
 
-      <main className={clsx('min-h-screen min-w-0 overflow-x-hidden transition-[margin] duration-300', open ? 'ml-60' : 'ml-0')}>
+      <div className={clsx('min-h-screen min-w-0 overflow-x-hidden transition-[margin] duration-300', open ? 'md:ml-60' : 'md:ml-0')}>
         {children}
-      </main>
+      </div>
     </div>
   );
 }

@@ -7,17 +7,18 @@
 - 支持逐项实时预览、重新生成、多版本管理
 """
 
-import os
-import re
+import asyncio
 import glob
 import json
-import asyncio
 import logging
-from typing import Any, Optional, Dict, List
+import os
+import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Any, Dict, List, Optional
+
+from prompts.loader import load_prompt
 
 from .base_agent import AgentInterface
-from prompts.loader import load_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -45,7 +46,9 @@ class ReferenceGeneratorAgent(AgentInterface):
 
     @staticmethod
     def _scenes_base(sid: str) -> str:
-        return os.path.join('code/result/image', str(sid), 'Scenes')
+        from config import settings
+
+        return os.path.join(settings.RESULT_DIR, 'image', str(sid), 'Scenes')
 
     def _list_versions(self, sid: str, shot_id: str) -> List[str]:
         """列出某个分镜的所有历史版本
@@ -56,7 +59,7 @@ class ReferenceGeneratorAgent(AgentInterface):
     @staticmethod
     def _list_versions_static(sid: str, shot_id: str) -> List[str]:
         """列出某个分镜的所有历史版本（静态方法，供外部调用）"""
-        scenes_dir = os.path.join('code/result/image', str(sid), 'Scenes')
+        scenes_dir = ReferenceGeneratorAgent._scenes_base(sid)
         files = []
         for ext in ("jpg", "jpeg", "png", "webp", "bmp"):
             pattern = os.path.join(scenes_dir, f"{shot_id}*.{ext}")
@@ -469,7 +472,7 @@ class ReferenceGeneratorAgent(AgentInterface):
                 if json_match:
                     eval_result = json.loads(json_match.group())
                     return eval_result
-            except:
+            except (json.JSONDecodeError, TypeError, ValueError):
                 pass
 
             return {

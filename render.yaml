@@ -5,6 +5,7 @@ services:
     rootDir: daomeng/daomeng/backend
     plan: free
     autoDeploy: true
+    healthCheckPath: /api/health
     envVars:
       - key: HOST
         value: 0.0.0.0
@@ -20,8 +21,12 @@ services:
         value: "86400"
       - key: API_RATE_LIMIT_PER_MINUTE
         value: "60"
+      - key: AUTH_RATE_LIMIT_PER_MINUTE
+        value: "10"
       - key: MAX_UPLOAD_BYTES
         value: "26214400"
+      - key: MAX_USER_TEMP_BYTES
+        value: "262144000"
       - key: SILICONFLOW_API_KEY
         sync: false
       - key: DASHSCOPE_API_KEY
