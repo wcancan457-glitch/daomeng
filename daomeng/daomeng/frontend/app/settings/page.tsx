@@ -126,8 +126,8 @@ const GROUPS: Array<{ title: string; description: string; fields: Field[] }> = [
     ],
   },
   {
-    title: 'Default Models',
-    description: '主流程和 Pipeline 使用的默认模型。',
+    title: '模型选择（自动分配给 Agent）',
+    description: '选择主流程使用的模型。系统会按文本、视觉理解、生图和生视频能力自动分配给对应 Agent。',
     fields: [
       { path: 'models.llm', label: 'llm 文本模型', type: 'select', options: [] },
       { path: 'models.vlm', label: 'vlm 视觉语言模型', type: 'select', options: [] },
@@ -177,11 +177,6 @@ function formatConfigPath(path: string) {
   return normalized;
 }
 
-function maskSecret(value: unknown) {
-  const text = String(value ?? '');
-  return text ? '••••••••••••••••' : '';
-}
-
 function isProviderOptions(options: Field['options']): options is ProviderGroup[] {
   return Array.isArray(options) && options.some(option => 'models' in option);
 }
@@ -194,6 +189,7 @@ export default function SettingsPage() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
+  const [configuredSecrets, setConfiguredSecrets] = useState<Record<string, boolean>>({});
   const [modelSelects, setModelSelects] = useState<Record<ModelSelectKey, ProviderGroup[]>>(EMPTY_MODEL_SELECTS);
 
   useEffect(() => {
@@ -206,6 +202,7 @@ export default function SettingsPage() {
         const data = await resp.json();
         setConfig(data.config || {});
         setPath(data.path || '');
+        setConfiguredSecrets(data.configured_secrets || {});
         setSecretDrafts({});
       } catch (e: any) {
         setError(e.message || '读取配置失败');
@@ -244,7 +241,7 @@ export default function SettingsPage() {
   }, []);
 
   const groups = GROUPS.map(group => {
-    if (group.title !== 'Default Models') return group;
+    if (group.title !== '模型选择（自动分配给 Agent）') return group;
     return {
       ...group,
       fields: group.fields.map(field => {
@@ -259,6 +256,10 @@ export default function SettingsPage() {
       }),
     };
   });
+  const orderedGroups = [
+    ...groups.filter(group => group.title === '模型选择（自动分配给 Agent）'),
+    ...groups.filter(group => group.title !== '模型选择（自动分配给 Agent）'),
+  ];
 
   const updateField = (field: Field, raw: string | boolean) => {
     const value = field.type === 'number' ? Number(raw) || 0 : raw;
@@ -279,8 +280,9 @@ export default function SettingsPage() {
       const data = await resp.json();
       setConfig(data.config || {});
       setPath(data.path || '');
+      setConfiguredSecrets(data.configured_secrets || {});
       setSecretDrafts({});
-      setMessage('配置已保存');
+      setMessage('配置已保存，新的 API 与模型分配已经生效');
     } catch (e: any) {
       setError(e.message || '保存配置失败');
     } finally {
@@ -317,7 +319,7 @@ export default function SettingsPage() {
         <div className="mb-8 text-center">
           <div className="inline-flex items-center gap-2 mb-3">
             <Settings className="w-7 h-7 text-blue-500" />
-            <h1 className="text-2xl font-bold text-gray-800">设置</h1>
+            <h1 className="text-2xl font-bold text-gray-800">模型与 API 配置</h1>
           </div>
           <p className="text-sm text-gray-500">
             修改后端配置并保存到 <span className="font-mono">{formatConfigPath(path)}</span>
@@ -331,7 +333,7 @@ export default function SettingsPage() {
           </div>
         ) : (
           <div className="space-y-5">
-            {groups.map(group => (
+            {orderedGroups.map(group => (
               <section key={group.title} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
                 <div className="mb-4">
                   <h2 className="text-sm font-semibold text-gray-800">{group.title}</h2>
@@ -376,11 +378,11 @@ export default function SettingsPage() {
                           <input
                             type="password"
                             autoComplete="new-password"
-                            value={secretDrafts[field.path] ?? maskSecret(value)}
+                            value={secretDrafts[field.path] ?? ''}
                             onFocus={() => startEditingSecretField(field)}
                             onBlur={() => stopEditingSecretField(field)}
                             onChange={event => updateSecretField(field, event.target.value)}
-                            placeholder={value ? '已保存，点击后输入新密钥覆盖' : '输入密钥'}
+                            placeholder={configuredSecrets[field.path] ? '已安全保存，输入新密钥可覆盖' : '输入密钥'}
                             className="h-10 rounded-lg border border-gray-200 bg-white px-3 font-mono text-sm text-gray-700 outline-none focus:border-blue-300"
                           />
                         ) : (

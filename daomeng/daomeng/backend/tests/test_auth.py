@@ -8,13 +8,17 @@ os.environ["DATABASE_URL"] = f"sqlite:///{(_test_dir / 'auth.db').as_posix()}"
 os.environ["RUNTIME_DATA_DIR"] = str(_test_dir / "runtime")
 os.environ["AUTH_MODE"] = "users"
 os.environ["AUTH_TOKEN_SECRET"] = "test-only-secret-that-is-longer-than-thirty-two-characters"
+os.environ["SETTINGS_ENCRYPTION_KEY"] = "test-only-settings-encryption-key"
 os.environ["AUTH_COOKIE_SECURE"] = "false"
 os.environ["REGISTRATION_ENABLED"] = "true"
 os.environ["PIPELINE_WORKER_ENABLED"] = "false"
 
 from fastapi.testclient import TestClient  # noqa: E402
 from PIL import Image  # noqa: E402
+from sqlalchemy import select  # noqa: E402
 
+from accounts.database import SessionLocal  # noqa: E402
+from accounts.models import SystemSetting, User  # noqa: E402
 from api.app import app  # noqa: E402
 from core.orchestrator import WorkflowEngine  # noqa: E402
 from pipelines.storage import (  # noqa: E402
@@ -121,6 +125,69 @@ def test_register_login_refresh_and_logout() -> None:
 
         revoked = client.get("/api/auth/me", headers=auth_header(refreshed_access_token))
         assert revoked.status_code == 401
+
+
+def test_admin_can_save_encrypted_model_credentials() -> None:
+    email = "model-admin@example.com"
+    password = "admin model gateway password"
+    with TestClient(app) as client:
+        registered = client.post(
+            "/api/auth/register",
+            json={"email": email, "password": password, "display_name": "模型管理员"},
+        )
+        assert registered.status_code == 201
+        with SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.normalized_email == email))
+            assert admin is not None
+            admin.role = "admin"
+            db.commit()
+
+        login = client.post("/api/auth/login", json={"email": email, "password": password})
+        assert login.status_code == 200
+        token = login.json()["access_token"]
+        headers = auth_header(token)
+
+        updated = client.put(
+            "/api/config",
+            headers=headers,
+            json={
+                "values": {
+                    "api_providers": {
+                        "siliconflow": {"api_key": "sf-test-secret"},
+                        "ark": {"api_key": "ark-test-secret"},
+                        "dashscope": {"api_key": "dashscope-test-secret"},
+                    },
+                    "models": {
+                        "llm": "Qwen/Qwen2.5-72B-Instruct",
+                        "vlm": "Qwen/Qwen2.5-VL-72B-Instruct",
+                        "image_t2i": "doubao-seedream-5-0-260128",
+                        "image_it2i": "doubao-seedream-5-0-260128",
+                        "video_first_frame": "wan2.7-i2v",
+                    },
+                }
+            },
+        )
+        assert updated.status_code == 200
+        payload = updated.json()
+        assert payload["configured_secrets"]["api_providers.siliconflow.api_key"] is True
+        assert payload["config"]["api_providers"]["siliconflow"]["api_key"] == ""
+        assert payload["config"]["models"]["llm"] == "Qwen/Qwen2.5-72B-Instruct"
+        assert payload["config"]["models"]["image_t2i"] == "doubao-seedream-5-0-260128"
+        assert payload["config"]["models"]["video_first_frame"] == "wan2.7-i2v"
+
+        preserved = client.put(
+            "/api/config",
+            headers=headers,
+            json={"values": {"api_providers": {"siliconflow": {"api_key": ""}}}},
+        )
+        assert preserved.status_code == 200
+        assert preserved.json()["configured_secrets"]["api_providers.siliconflow.api_key"] is True
+
+        with SessionLocal() as db:
+            record = db.get(SystemSetting, "model_gateway_config_v1")
+            assert record is not None
+            assert "sf-test-secret" not in record.encrypted_value
+            assert "ark-test-secret" not in record.encrypted_value
 
 
 def test_projects_and_tasks_are_isolated_by_user() -> None:

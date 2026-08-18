@@ -13,6 +13,7 @@ if _backend_dir not in sys.path:
 
 from accounts.database import SessionLocal, init_database
 from accounts.service import bootstrap_admin
+from accounts.settings_store import load_runtime_config
 from api.logging_config import setup_concurrent_logging
 from api.observability import ObservabilityMiddleware
 from api.security_layer import ALLOWED_ORIGINS, SecurityMiddleware
@@ -28,6 +29,10 @@ logger = logging.getLogger(__name__)
 init_database()
 with SessionLocal() as db:
     bootstrap_admin(db)
+    stored_config = load_runtime_config(db)
+    if stored_config:
+        settings.apply_runtime_config(stored_config)
+        logger.info("Encrypted administrator model configuration loaded")
 
 from api.routers import (
     auth_router,

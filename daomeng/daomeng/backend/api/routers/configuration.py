@@ -1,9 +1,12 @@
 import copy
 from typing import Any, Dict
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
+from sqlalchemy.orm import Session
 
+from accounts.database import get_db
+from accounts.settings_store import save_runtime_config
 from api.auth_context import request_user_role, require_admin
 from api.logging_config import apply_access_log_setting, apply_log_level_setting
 from config import Config
@@ -39,14 +42,17 @@ def _configured_secrets(values: Dict[str, Any], prefix: str = "") -> Dict[str, b
     return result
 
 
-def _merge_without_secrets(current: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+def _merge_secret_updates(current: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
     merged = copy.deepcopy(current)
     for key, value in updates.items():
         if key in SECRET_KEYS:
-            merged[key] = ""
+            # A redacted/blank field means "keep the saved value". A new
+            # non-empty value explicitly replaces it.
+            if isinstance(value, str) and value.strip():
+                merged[key] = value.strip()
             continue
         if isinstance(value, dict) and isinstance(merged.get(key), dict):
-            merged[key] = _merge_without_secrets(merged[key], value)
+            merged[key] = _merge_secret_updates(merged[key], value)
         else:
             merged[key] = copy.deepcopy(value)
     return merged
@@ -74,9 +80,15 @@ async def get_config(request: Request):
 
 
 @router.put("/api/config")
-async def update_config(req: ConfigUpdateRequest, request: Request):
-    require_admin(request)
-    config = Config.update_config(_merge_without_secrets(Config.as_dict(), req.values))
+async def update_config(
+    req: ConfigUpdateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    actor_id = require_admin(request)
+    values = _merge_secret_updates(Config.as_dict(), req.values)
+    save_runtime_config(db, values, actor_id)
+    config = Config.apply_runtime_config(values)
     apply_log_level_setting()
     apply_access_log_setting()
     return _response(config)

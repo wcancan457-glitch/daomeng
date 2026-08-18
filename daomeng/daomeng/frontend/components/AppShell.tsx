@@ -18,7 +18,7 @@ const NAV_ITEMS = [
   { href: '/pipelines/digital-human', label: '数字人口播', icon: UserRound },
 ];
 
-const SETTINGS_ITEM = { href: '/settings', label: '设置', icon: Settings };
+const SETTINGS_ITEM = { href: '/settings', label: '模型配置', icon: Settings };
 
 const PIPELINE_ROUTES: Record<string, { href: string; label: string }> = {
   standard: { href: '/pipelines/standard', label: '文艺短视频' },
@@ -426,7 +426,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </button>
           </div>
           <nav className="min-h-0 flex-1 overflow-y-auto p-3 space-y-1">
-            {NAV_ITEMS.map(item => {
+            {(canManageSettings ? [...NAV_ITEMS, SETTINGS_ITEM] : NAV_ITEMS).map(item => {
               const Icon = item.icon;
               const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
               return (
@@ -462,7 +462,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-2 focus-visible:outline-blue-600"
                 >
                   <Settings className="h-4 w-4" />
-                  修改配置
+                  模型配置
                 </button>
                 <button
                   type="button"

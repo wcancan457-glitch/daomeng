@@ -348,7 +348,15 @@ class Config:
 
     @classmethod
     def update_config(cls, values: Dict[str, Any]) -> Dict[str, Any]:
-        clean = _apply_env_overrides(save_config(values))
+        return cls._apply_values(_apply_env_overrides(save_config(values)))
+
+    @classmethod
+    def apply_runtime_config(cls, values: Dict[str, Any]) -> Dict[str, Any]:
+        """Apply database-backed administrator settings without writing source files."""
+        return cls._apply_values(_apply_env_overrides(_coerce_config(values)))
+
+    @classmethod
+    def _apply_values(cls, clean: Dict[str, Any]) -> Dict[str, Any]:
         cls.CONFIG = clean
 
         cls.HOST = _get(clean, "server.host")

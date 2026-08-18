@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, String
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from accounts.database import Base
@@ -82,3 +82,20 @@ class TaskOwnership(Base):
 
 
 Index("ix_task_ownership_user_kind", TaskOwnership.user_id, TaskOwnership.task_kind)
+
+
+class SystemSetting(Base):
+    """Encrypted administrator-owned runtime configuration.
+
+    The value is intentionally opaque to the database. Decryption only happens
+    inside the settings service after an administrator request is authorized.
+    """
+
+    __tablename__ = "system_settings"
+
+    key: Mapped[str] = mapped_column(String(80), primary_key=True)
+    encrypted_value: Mapped[str] = mapped_column(Text, nullable=False)
+    updated_by: Mapped[str] = mapped_column(String(80), nullable=False, default="system")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
