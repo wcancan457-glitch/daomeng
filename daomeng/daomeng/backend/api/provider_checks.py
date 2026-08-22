@@ -10,7 +10,6 @@ import httpx
 from config import Config
 from models.config_model import get_model_config
 
-
 SUPPORTED_PROVIDERS = {"siliconflow", "dashscope", "ark"}
 
 PROVIDER_LABELS = {
