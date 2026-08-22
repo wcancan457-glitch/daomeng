@@ -263,6 +263,8 @@ class ReferenceGeneratorAgent(AgentInterface):
         最多生成 max_versions 个版本，如果所有版本都没有达到硬性合格标准，
         使用 VLM 选择最好的一张作为最终参考图。
         """
+        from models.public_errors import public_image_error
+
         segment_id = segment.get('segment_id', '')
 
         # 仅提取第一个镜头的描述作为当前 Plot
@@ -283,6 +285,7 @@ class ReferenceGeneratorAgent(AgentInterface):
         # 收集所有生成的版本
         all_versions = []
         all_eval_results = []
+        last_error = ""
 
         for version in range(max_versions):
             self._check_cancel()
@@ -304,6 +307,7 @@ class ReferenceGeneratorAgent(AgentInterface):
                     resolution=resolution,
                 )
                 if not paths:
+                    last_error = "图片模型没有返回可下载的图片。"
                     continue
 
                 gen = paths[0]
@@ -346,6 +350,7 @@ class ReferenceGeneratorAgent(AgentInterface):
 
             except Exception as e:
                 logger.error(f"Segment {segment_id} image generation failed: {e}")
+                last_error = public_image_error(e, "Seedream / 图片模型")
 
         # 所有版本都没有达到硬性标准，使用 VLM 选择最好的
         if all_versions:
@@ -367,13 +372,16 @@ class ReferenceGeneratorAgent(AgentInterface):
                     segment_id,
                     hard_failures or best_eval.get("issues", []),
                 )
+                best_eval["generation_error"] = "图片已经生成，但没有版本通过 VLM 质量检查。"
                 return segment_id, None, best_eval
 
         # 如果没有任何生成成功
         logger.warning(f"[{segment_id}] 没有成功生成任何图片")
         if all_eval_results and isinstance(all_eval_results[-1], dict):
             all_eval_results[-1]["final_visual_prompt"] = current_visual_prompt
-        return segment_id, None, None
+        failure = all_eval_results[-1] if all_eval_results and isinstance(all_eval_results[-1], dict) else {}
+        failure["generation_error"] = last_error or "图片生成失败，模型没有返回可用文件。"
+        return segment_id, None, failure
 
     def _select_best_with_vlm(self, image_paths: List[str], segment: dict, plot: str, visual_prompt: str,
                               character_description: str = "", setting_description: str = "",
@@ -493,13 +501,15 @@ class ReferenceGeneratorAgent(AgentInterface):
 
     # ─── 构建最终 payload ───
 
-    def _build_payload(self, sid: str, segments: list, session_data: dict = None, prompts_map: dict = None, selected_images: dict = None) -> dict:
+    def _build_payload(self, sid: str, segments: list, session_data: dict = None, prompts_map: dict = None,
+                       selected_images: dict = None, errors: Dict[str, str] = None) -> dict:
         """构建最终 payload"""
         scenes = []
         if prompts_map is None:
             prompts_map = {}
         if selected_images is None:
             selected_images = {}
+        errors = errors or {}
 
         # 建立 scene_id 到 selected 路径的映射
         selected_map = {}
@@ -530,8 +540,8 @@ class ReferenceGeneratorAgent(AgentInterface):
             visual_prompt = prompts_map.get(segment_id) or existing_prompts.get(segment_id) or ""
 
             # 最终 payload 表示阶段已跑完；仍没有图片的片段应标记为 failed，避免覆盖实时失败状态。
-            status = "done" if selected_path or versions else "failed"
-            scenes.append({
+            status = "failed" if errors.get(segment_id) else ("done" if selected_path or versions else "failed")
+            scene = {
                 "id": segment_id,
                 "name": f"第{seg.get('episode_number', 1)}集-片段{seg.get('segment_number', idx)}",
                 "index": idx,
@@ -540,7 +550,10 @@ class ReferenceGeneratorAgent(AgentInterface):
                 "selected": selected_path,
                 "versions": versions,
                 "status": status,
-            })
+            }
+            if errors.get(segment_id):
+                scene["error"] = errors[segment_id]
+            scenes.append(scene)
         return {
             "payload": {
                 "session_id": sid,
@@ -602,6 +615,7 @@ class ReferenceGeneratorAgent(AgentInterface):
             ark_api_key=settings.ARK_API_KEY,
             ark_base_url=settings.ARK_BASE_URL,
         )
+        generation_errors: Dict[str, str] = {}
 
         episodes = artifacts.get('storyboard', {}).get('episodes', [])
         if not episodes:
@@ -733,12 +747,15 @@ class ReferenceGeneratorAgent(AgentInterface):
                             try:
                                 _, result_path, eval_result, ff_prompt = fut.result()
                                 prompt_map[segment_id_done] = ff_prompt
+                                generation_error = eval_result.get("generation_error", "") if isinstance(eval_result, dict) else ""
                             except Exception as e:
                                 logger.error(f"Regen future error for {segment_id_done}: {e}")
                                 result_path = None
+                                generation_error = "参考图任务执行失败，请检查模型配置后重试。"
                             done += 1
                             pct = calc_pct_regen(done)
                             if result_path:
+                                generation_errors.pop(segment_id_done, None)
                                 selected_images[segment_id_done] = result_path
                                 versions = self._list_versions(sid, segment_id_done)
                                 self._report_progress("参考图", f"完成: {segment_id_done}", pct, data={
@@ -750,11 +767,14 @@ class ReferenceGeneratorAgent(AgentInterface):
                                     }
                                 })
                             else:
+                                generation_errors[segment_id_done] = generation_error or "图片生成失败，模型没有返回可用文件。"
+                                versions = self._list_versions(sid, segment_id_done)
                                 self._report_progress("参考图", f"失败: {segment_id_done}", pct, data={
                                     "asset_complete": {
                                         "type": "scenes", "id": segment_id_done,
                                         "status": "failed",
-                                        "selected": "", "versions": [],
+                                        "selected": versions[-1] if versions else "", "versions": versions,
+                                        "error": generation_errors[segment_id_done],
                                     }
                                 })
                             # 检查取消
@@ -769,7 +789,9 @@ class ReferenceGeneratorAgent(AgentInterface):
                 await loop.run_in_executor(None, regen_run)
 
                 self._report_progress("参考图", "完成", 100)
-                return self._build_payload(sid, fresh_segments, session_data, prompt_map, selected_images)
+                return self._build_payload(
+                    sid, fresh_segments, session_data, prompt_map, selected_images, generation_errors
+                )
 
         # ═══ 正常流程：全量生成 ═══
         self._report_progress("参考图", "加载分镜数据...", 5)
@@ -879,14 +901,17 @@ class ReferenceGeneratorAgent(AgentInterface):
                     try:
                         _, result_path, eval_result, ff_prompt = fut.result()
                         first_frame_prompts[segment_id_done] = ff_prompt
+                        generation_error = eval_result.get("generation_error", "") if isinstance(eval_result, dict) else ""
                     except Exception as e:
                         logger.error(f"Image future error for {segment_id_done}: {e}")
                         result_path = None
+                        generation_error = "参考图任务执行失败，请检查模型配置后重试。"
                     
                     done += 1
                     pct = calc_pct(done)
                     
                     if result_path:
+                        generation_errors.pop(segment_id_done, None)
                         selected_images_map[segment_id_done] = result_path
                         versions = self._list_versions(sid, segment_id_done)
                         self._report_progress("参考图", f"完成: {segment_id_done}", pct, data={
@@ -898,11 +923,14 @@ class ReferenceGeneratorAgent(AgentInterface):
                             }
                         })
                     else:
+                        generation_errors[segment_id_done] = generation_error or "图片生成失败，模型没有返回可用文件。"
+                        versions = self._list_versions(sid, segment_id_done)
                         self._report_progress("参考图", f"失败: {segment_id_done}", pct, data={
                             "asset_complete": {
                                 "type": "scenes", "id": segment_id_done,
                                 "status": "failed",
-                                "selected": "", "versions": [],
+                                "selected": versions[-1] if versions else "", "versions": versions,
+                                "error": generation_errors[segment_id_done],
                             }
                         })
                     
@@ -927,8 +955,12 @@ class ReferenceGeneratorAgent(AgentInterface):
             if "cancel" in str(e).lower():
                 logger.info("ReferenceGeneratorAgent: 用户取消，返回已完成部分结果")
                 self._report_progress("参考图", "已取消（保留已完成图片）", 100)
-                return self._build_payload(sid, segments, session_data, first_frame_prompts, selected_images_map)
+                return self._build_payload(
+                    sid, segments, session_data, first_frame_prompts, selected_images_map, generation_errors
+                )
             raise
 
         self._report_progress("参考图", "完成", 100)
-        return self._build_payload(sid, segments, session_data, first_frame_prompts, selected_images_map)
+        return self._build_payload(
+            sid, segments, session_data, first_frame_prompts, selected_images_map, generation_errors
+        )

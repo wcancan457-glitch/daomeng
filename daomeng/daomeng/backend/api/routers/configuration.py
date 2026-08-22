@@ -4,11 +4,13 @@ from typing import Any, Dict
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from starlette.concurrency import run_in_threadpool
 
 from accounts.database import get_db
 from accounts.settings_store import save_runtime_config
 from api.auth_context import request_user_role, require_admin
 from api.logging_config import apply_access_log_setting, apply_log_level_setting
+from api.provider_checks import check_provider
 from config import Config
 
 router = APIRouter(tags=["Configuration"])
@@ -18,6 +20,10 @@ SECRET_KEYS = {"api_key", "access_key", "secret_key"}
 
 class ConfigUpdateRequest(BaseModel):
     values: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ProviderTestRequest(BaseModel):
+    provider: str = Field(min_length=1, max_length=32)
 
 
 
@@ -92,3 +98,9 @@ async def update_config(
     apply_log_level_setting()
     apply_access_log_setting()
     return _response(config)
+
+
+@router.post("/api/config/test-provider")
+async def test_provider(req: ProviderTestRequest, request: Request):
+    require_admin(request)
+    return await run_in_threadpool(check_provider, req.provider)

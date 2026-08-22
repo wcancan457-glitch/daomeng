@@ -2,6 +2,7 @@ import os
 import tempfile
 from io import BytesIO
 from pathlib import Path
+from unittest.mock import Mock, patch
 
 _test_dir = Path(tempfile.mkdtemp(prefix="daomeng-auth-tests-"))
 os.environ["DATABASE_URL"] = f"sqlite:///{(_test_dir / 'auth.db').as_posix()}"
@@ -182,6 +183,36 @@ def test_admin_can_save_encrypted_model_credentials() -> None:
         )
         assert preserved.status_code == 200
         assert preserved.json()["configured_secrets"]["api_providers.siliconflow.api_key"] is True
+
+        model_list_response = Mock()
+        model_list_response.status_code = 200
+        model_list_response.json.return_value = {
+            "data": [{"id": "doubao-seedream-5-0-260128"}]
+        }
+        with patch("api.provider_checks.httpx.Client") as client_class:
+            client_class.return_value.__enter__.return_value.get.return_value = model_list_response
+            provider_test = client.post(
+                "/api/config/test-provider",
+                headers=headers,
+                json={"provider": "ark"},
+            )
+        assert provider_test.status_code == 200
+        assert provider_test.json()["ok"] is True
+        assert provider_test.json()["level"] == "success"
+        assert provider_test.json()["verified_models"] == ["doubao-seedream-5-0-260128"]
+
+        unauthorized_response = Mock()
+        unauthorized_response.status_code = 401
+        with patch("api.provider_checks.httpx.Client") as client_class:
+            client_class.return_value.__enter__.return_value.get.return_value = unauthorized_response
+            invalid_provider_test = client.post(
+                "/api/config/test-provider",
+                headers=headers,
+                json={"provider": "ark"},
+            )
+        assert invalid_provider_test.status_code == 200
+        assert invalid_provider_test.json()["ok"] is False
+        assert "API Key 无效" in invalid_provider_test.json()["message"]
 
         with SessionLocal() as db:
             record = db.get(SystemSetting, "model_gateway_config_v1")

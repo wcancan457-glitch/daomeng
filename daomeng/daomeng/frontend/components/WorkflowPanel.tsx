@@ -90,9 +90,7 @@ function mergeAssetVersions(current?: string[], incoming?: string[]): string[] {
 
 function mergeAssetUpdateItem(item: any, assetUpdate: any): any {
   const hasExistingSelection = Boolean(item?.selected);
-  const nextStatus = hasExistingSelection && ['done', 'failed'].includes(assetUpdate.status)
-    ? 'done'
-    : (assetUpdate.status ?? item.status);
+  const nextStatus = assetUpdate.status ?? item.status;
   return {
     ...item,
     status: nextStatus,
@@ -102,6 +100,7 @@ function mergeAssetUpdateItem(item: any, assetUpdate: any): any {
     versions: assetUpdate.versions
       ? mergeAssetVersions(item.versions, assetUpdate.versions)
       : item.versions,
+    error: assetUpdate.error ?? (['running', 'done'].includes(nextStatus) ? undefined : item.error),
   };
 }
 

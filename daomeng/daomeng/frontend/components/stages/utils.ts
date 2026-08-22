@@ -6,9 +6,22 @@
 
 /** 将后端本地文件路径转换为浏览器可访问的 URL */
 export function assetUrl(path: string): string {
-  if (!path) return '';
-  if (path.startsWith('http') || path.startsWith('/') || path.startsWith('blob:') || path.startsWith('data:')) return path;
-  return '/' + path;
+  const value = (path || '').trim();
+  if (!value) return '';
+  if (/^(https?:|blob:|data:)/i.test(value)) return value;
+
+  // Agents persist absolute filesystem paths. Browsers cannot open paths such
+  // as /opt/render/.../code/result/... or D:\\...\\code\\result\\..., so keep
+  // only the part exposed by FastAPI's authenticated /code mount.
+  const normalized = value.replace(/\\/g, '/');
+  const lower = normalized.toLowerCase();
+  const codeMarker = lower.lastIndexOf('/code/');
+  if (codeMarker >= 0) return normalized.slice(codeMarker);
+  if (lower.startsWith('code/')) return `/${normalized}`;
+  if (lower.startsWith('/result/')) return `/code${normalized}`;
+  if (lower.startsWith('result/')) return `/code/${normalized}`;
+  if (normalized.startsWith('/')) return normalized;
+  return `/${normalized}`;
 }
 
 export function assetVersionLabel(path: string, index: number): string {

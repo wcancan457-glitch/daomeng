@@ -206,6 +206,7 @@ class ImageClient:
 
             except Exception as e:
                 logger.exception("Seedream generation failed: %s", e)
+                raise
 
         elif is_sora:
             # --- GPT/Sora Logic ---
@@ -232,6 +233,7 @@ class ImageClient:
 
             except Exception as e:
                 logger.exception("GPT/Sora generation failed: %s", e)
+                raise
 
         else:
             # --- DashScope Logic ---
@@ -274,5 +276,6 @@ class ImageClient:
                             
             except Exception as e:
                 logger.exception("DashScope generation failed: %s", e)
+                raise
 
         return generated_local_paths

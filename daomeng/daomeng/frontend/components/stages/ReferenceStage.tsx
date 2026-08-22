@@ -19,6 +19,7 @@ interface SceneItem {
   selected: string;       // 当前选中的文件路径
   versions: string[];     // 所有历史版本路径
   status?: 'pending' | 'done' | 'failed' | 'running';
+  error?: string;
 }
 
 /* ─── 水平滚动图片画廊 ─── */
@@ -35,6 +36,11 @@ function ImageGallery({
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [lightboxIndex, setLightboxIndex] = useState<number | null>(null);
+  const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
+
+  useEffect(() => {
+    setFailedImages(current => new Set([...current].filter(path => versions.includes(path))));
+  }, [versions]);
 
   const scroll = (dir: 'left' | 'right') => {
     if (!scrollRef.current) return;
@@ -84,13 +90,20 @@ function ImageGallery({
                   : 'ring-1 ring-gray-200 hover:ring-gray-300 hover:shadow-md'
               }`}
             >
-              <div className="relative group/img">
-                <img
-                  src={assetUrl(path)}
-                  alt={`v${i + 1}`}
-                  className="h-32 w-auto object-cover"
-                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                />
+              <div className="relative group/img h-32 min-w-44 bg-gray-50">
+                {failedImages.has(path) ? (
+                  <div className="flex h-full min-w-44 flex-col items-center justify-center gap-1 px-3 text-center text-[11px] text-red-500" role="status">
+                    <AlertCircle className="h-4 w-4" />
+                    <span>图片加载失败，请刷新后重试</span>
+                  </div>
+                ) : (
+                  <img
+                    src={assetUrl(path)}
+                    alt={`${assetVersionLabel(path, i)}预览`}
+                    className="h-32 w-auto object-cover"
+                    onError={() => setFailedImages(current => new Set(current).add(path))}
+                  />
+                )}
                 <button
                   onClick={(e) => { e.stopPropagation(); setLightboxIndex(i); }}
                   className="absolute top-1 right-1 w-6 h-6 rounded-full bg-black/40 flex items-center justify-center opacity-0 group-hover/img:opacity-100 transition-opacity hover:bg-black/60"
@@ -273,6 +286,11 @@ function SceneRow({
             />
           </label>
         </div>
+        {isFailed && scene.error && (
+          <p className="mt-2 line-clamp-3 break-words text-[11px] leading-relaxed text-red-600" role="alert" title={scene.error}>
+            {scene.error}
+          </p>
+        )}
       </div>
 
       {/* 右侧: 图片画廊 / 占位 */}

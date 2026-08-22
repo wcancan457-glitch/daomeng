@@ -1,7 +1,7 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { CheckCircle, Loader2, Save, Settings, XCircle } from 'lucide-react';
+import { CheckCircle, Loader2, PlugZap, Save, Settings, TriangleAlert, XCircle } from 'lucide-react';
 import BrandHeader from '@/components/BrandHeader';
 import { authenticatedFetch } from '@/lib/auth';
 import { fetchModelGroupsByType, fetchVideoModelGroupsByAbility } from '@/lib/modelRegistry';
@@ -23,6 +23,17 @@ type Field = {
 };
 
 type ModelSelectKey = 'llm' | 'vlm' | 'image_it2i' | 'image_t2i' | 'video_first_frame' | 'video_start_end' | 'video_reference';
+type TestableProvider = 'siliconflow' | 'dashscope' | 'ark';
+
+type ProviderTestResult = {
+  ok: boolean;
+  level: 'success' | 'warning' | 'error';
+  message: string;
+  configured?: boolean;
+  credential_source?: 'environment' | 'admin';
+  selected_models?: string[];
+  verified_models?: string[];
+};
 
 const EMPTY_MODEL_SELECTS: Record<ModelSelectKey, ProviderGroup[]> = {
   llm: [],
@@ -42,7 +53,7 @@ const LOG_LEVEL_OPTIONS = [
   { id: 'CRITICAL', label: 'CRITICAL - 严重错误' },
 ];
 
-const GROUPS: Array<{ title: string; description: string; fields: Field[] }> = [
+const GROUPS: Array<{ title: string; description: string; provider?: TestableProvider; fields: Field[] }> = [
   {
     title: 'API Server',
     description: '服务启动与日志配置。host / port 保存后需要重启后端完全生效。',
@@ -91,6 +102,7 @@ const GROUPS: Array<{ title: string; description: string; fields: Field[] }> = [
   {
     title: 'SiliconFlow',
     description: '硅基流动 OpenAI 兼容接口配置，可用于 Qwen / DeepSeek 等文本和视觉语言模型。',
+    provider: 'siliconflow',
     fields: [
       { path: 'api_providers.siliconflow.api_key', label: 'api_key API 密钥', type: 'password' },
       { path: 'api_providers.siliconflow.base_url', label: 'base_url 接口地址' },
@@ -100,6 +112,7 @@ const GROUPS: Array<{ title: string; description: string; fields: Field[] }> = [
   {
     title: 'DashScope',
     description: '通义千问、通义万相等 DashScope 服务配置。',
+    provider: 'dashscope',
     fields: [
       { path: 'api_providers.dashscope.api_key', label: 'api_key API 密钥', type: 'password' },
       { path: 'api_providers.dashscope.base_url', label: 'base_url 接口地址' },
@@ -109,6 +122,7 @@ const GROUPS: Array<{ title: string; description: string; fields: Field[] }> = [
   {
     title: 'ARK',
     description: 'Seedream / Seedance 使用的火山方舟配置。',
+    provider: 'ark',
     fields: [
       { path: 'api_providers.ark.api_key', label: 'api_key API 密钥', type: 'password' },
       { path: 'api_providers.ark.base_url', label: 'base_url 接口地址' },
@@ -191,6 +205,8 @@ export default function SettingsPage() {
   const [secretDrafts, setSecretDrafts] = useState<Record<string, string>>({});
   const [configuredSecrets, setConfiguredSecrets] = useState<Record<string, boolean>>({});
   const [modelSelects, setModelSelects] = useState<Record<ModelSelectKey, ProviderGroup[]>>(EMPTY_MODEL_SELECTS);
+  const [testingProvider, setTestingProvider] = useState<TestableProvider | null>(null);
+  const [providerTests, setProviderTests] = useState<Partial<Record<TestableProvider, ProviderTestResult>>>({});
 
   useEffect(() => {
     const load = async () => {
@@ -290,6 +306,49 @@ export default function SettingsPage() {
     }
   };
 
+  const testProvider = async (provider: TestableProvider) => {
+    const draftPath = `api_providers.${provider}.api_key`;
+    if ((secretDrafts[draftPath] || '').trim()) {
+      setProviderTests(current => ({
+        ...current,
+        [provider]: {
+          ok: false,
+          level: 'warning',
+          message: '当前输入的密钥尚未保存，请先点击“保存配置”再检测。',
+        },
+      }));
+      return;
+    }
+
+    setTestingProvider(provider);
+    setProviderTests(current => {
+      const next = { ...current };
+      delete next[provider];
+      return next;
+    });
+    try {
+      const resp = await authenticatedFetch('/api/config/test-provider', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider }),
+      });
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok) throw new Error(data.detail || '检测请求失败');
+      setProviderTests(current => ({ ...current, [provider]: data as ProviderTestResult }));
+    } catch (e: any) {
+      setProviderTests(current => ({
+        ...current,
+        [provider]: {
+          ok: false,
+          level: 'error',
+          message: e.message || '无法完成连通性检测，请稍后重试。',
+        },
+      }));
+    } finally {
+      setTestingProvider(null);
+    }
+  };
+
   const startEditingSecretField = (field: Field) => {
     setSecretDrafts(current => (
       Object.prototype.hasOwnProperty.call(current, field.path)
@@ -335,10 +394,55 @@ export default function SettingsPage() {
           <div className="space-y-5">
             {orderedGroups.map(group => (
               <section key={group.title} className="rounded-2xl border border-gray-200 bg-white p-5 shadow-sm">
-                <div className="mb-4">
-                  <h2 className="text-sm font-semibold text-gray-800">{group.title}</h2>
-                  <p className="mt-1 text-xs text-gray-500">{group.description}</p>
+                <div className="mb-4 flex flex-wrap items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <h2 className="text-sm font-semibold text-gray-800">{group.title}</h2>
+                    <p className="mt-1 text-xs text-gray-500">{group.description}</p>
+                  </div>
+                  {group.provider && (
+                    <button
+                      type="button"
+                      onClick={() => testProvider(group.provider!)}
+                      disabled={testingProvider !== null}
+                      className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 text-xs font-medium text-gray-700 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-2 disabled:cursor-wait disabled:bg-gray-50 disabled:text-gray-400"
+                    >
+                      {testingProvider === group.provider ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
+                      {testingProvider === group.provider ? '检测中' : '检测连通性'}
+                    </button>
+                  )}
                 </div>
+                {group.provider && providerTests[group.provider] && (() => {
+                  const result = providerTests[group.provider];
+                  const isSuccess = result?.level === 'success';
+                  const isWarning = result?.level === 'warning';
+                  return (
+                    <div
+                      role="status"
+                      aria-live="polite"
+                      className={`mb-4 flex items-start gap-2 rounded-xl px-3 py-2.5 text-xs leading-relaxed ${
+                        isSuccess
+                          ? 'bg-emerald-50 text-emerald-800'
+                          : isWarning
+                            ? 'bg-amber-50 text-amber-800'
+                            : 'bg-red-50 text-red-700'
+                      }`}
+                    >
+                      {isSuccess
+                        ? <CheckCircle className="mt-0.5 h-4 w-4 flex-none" />
+                        : isWarning
+                          ? <TriangleAlert className="mt-0.5 h-4 w-4 flex-none" />
+                          : <XCircle className="mt-0.5 h-4 w-4 flex-none" />}
+                      <div className="min-w-0 break-words">
+                        <p>{result?.message}</p>
+                        {result?.configured && result.credential_source && (
+                          <p className="mt-1 opacity-75">
+                            当前生效密钥来自{result.credential_source === 'environment' ? ' Render 环境变量' : '管理端安全配置'}。
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })()}
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                   {group.fields.map(field => {
                     const value = getValue(config, field.path);

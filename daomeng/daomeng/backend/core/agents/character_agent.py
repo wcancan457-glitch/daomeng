@@ -163,6 +163,8 @@ class CharacterDesignerAgent(AgentInterface):
     def _generate_one(self, img_client, asset_id: str, name: str, desc: str,
                       asset_type: str, style: str, species: str,
                       t2i_model: str, vlm_model: str, sid: str, max_iterations: int = 3) -> tuple:
+        from models.public_errors import public_image_error
+
         """生成单个素材图并返回 (asset_id, path_or_None, eval_result)
 
         评估-生成循环：如果 VLM 评估发现问题，最多重新生成 max_iterations 次
@@ -179,6 +181,8 @@ class CharacterDesignerAgent(AgentInterface):
         video_ratio = "16:9"
         resolution = "2K"
         current_prompt = base_prompt
+        eval_result = None
+        last_error = ""
 
         for iteration in range(max_iterations):
             self._check_cancel()
@@ -192,6 +196,7 @@ class CharacterDesignerAgent(AgentInterface):
                     session_id=str(sid), save_dir=save_dir, video_ratio=video_ratio, resolution=resolution,
                 )
                 if not paths:
+                    last_error = "图片模型没有返回可下载的图片。"
                     continue
 
                 gen = paths[0]
@@ -235,6 +240,7 @@ class CharacterDesignerAgent(AgentInterface):
 
             except Exception as e:
                 logger.error(f"Asset gen failed for {asset_type} {name}({asset_id}): {e}")
+                last_error = public_image_error(e, "Seedream / 图片模型")
 
         # 达到最大迭代次数，尝试使用 VLM 选择最佳图片
         logger.warning(f"[{asset_type}] {name} reached max iterations ({max_iterations}), trying VLM selection")
@@ -251,7 +257,12 @@ class CharacterDesignerAgent(AgentInterface):
                 return asset_id, best_path, best_eval
 
         # 没有多个版本或 VLM 选择失败，返回最后一次结果
-        return asset_id, save_path if os.path.exists(save_path) else None, eval_result if 'eval_result' in locals() else None
+        result_path = save_path if os.path.exists(save_path) else None
+        if result_path:
+            return asset_id, result_path, eval_result
+        failure = eval_result if isinstance(eval_result, dict) else {}
+        failure["generation_error"] = last_error or "图片生成失败，模型没有返回可用文件。"
+        return asset_id, None, failure
 
     def _evaluate_with_vlm(self, image_path: str, description: str, asset_type: str, vlm_model: str = "qwen3.5-plus") -> dict:
         """使用 VLM 评估生成的图片"""
@@ -427,6 +438,7 @@ class CharacterDesignerAgent(AgentInterface):
             ark_api_key=settings.ARK_API_KEY,
             ark_base_url=settings.ARK_BASE_URL,
         )
+        generation_errors: Dict[tuple[str, str], str] = {}
 
         # ═══════════ 介入: 重新生成指定素材 ═══════════
         if intervention:
@@ -536,9 +548,11 @@ class CharacterDesignerAgent(AgentInterface):
                         for fut in as_completed(futs):
                             atype, aid, fname = futs[fut]
                             _, result_path, eval_result = fut.result()
+                            generation_error = eval_result.get("generation_error", "") if isinstance(eval_result, dict) else ""
                             done += 1
                             pct = 10 + int(85 * done / max(total, 1))
                             if result_path:
+                                generation_errors.pop((atype, aid), None)
                                 versions = self._list_versions(sid, atype, aid)
                                 self._report_progress("角色设计", f"完成: {fname}", pct, data={
                                     "asset_complete": {
@@ -548,10 +562,13 @@ class CharacterDesignerAgent(AgentInterface):
                                     }
                                 })
                             else:
+                                generation_errors[(atype, aid)] = generation_error or "图片生成失败，模型没有返回可用文件。"
+                                versions = self._list_versions(sid, atype, aid)
                                 self._report_progress("角色设计", f"失败: {fname}", pct, data={
                                     "asset_complete": {
                                         "type": atype, "id": aid, "status": "failed",
-                                        "selected": "", "versions": [],
+                                        "selected": versions[-1] if versions else "", "versions": versions,
+                                        "error": generation_errors[(atype, aid)],
                                     }
                                 })
 
@@ -559,7 +576,9 @@ class CharacterDesignerAgent(AgentInterface):
                 await loop.run_in_executor(None, regen_run)
 
             self._report_progress("角色设计", "完成", 100)
-            return self._build_payload(sid, chars_desc, sets_desc, select_chars, select_sets)
+            return self._build_payload(
+                sid, chars_desc, sets_desc, select_chars, select_sets, errors=generation_errors
+            )
 
         # ═══════════ 正常流程: 全量首次生成 ═══════════
         self._report_progress("角色设计", "读取剧本数据...", 5)
@@ -626,10 +645,12 @@ class CharacterDesignerAgent(AgentInterface):
 
                 for fut in as_completed(futs):
                     atype, aid, fname = futs[fut]
-                    _, result_path, _ = fut.result()
+                    _, result_path, eval_result = fut.result()
+                    generation_error = eval_result.get("generation_error", "") if isinstance(eval_result, dict) else ""
                     done += 1
                     pct = 10 + int(85 * done / max(total, 1))
                     if result_path:
+                        generation_errors.pop((atype, aid), None)
                         versions = self._list_versions(sid, atype, aid)
                         self._report_progress("角色设计", f"完成: {fname}", pct, data={
                             "asset_complete": {
@@ -638,10 +659,13 @@ class CharacterDesignerAgent(AgentInterface):
                             }
                         })
                     else:
+                        generation_errors[(atype, aid)] = generation_error or "图片生成失败，模型没有返回可用文件。"
+                        versions = self._list_versions(sid, atype, aid)
                         self._report_progress("角色设计", f"失败: {fname}", pct, data={
                             "asset_complete": {
                                 "type": atype, "id": aid, "status": "failed",
-                                "selected": "", "versions": self._list_versions(sid, atype, aid),
+                                "selected": versions[-1] if versions else "", "versions": versions,
+                                "error": generation_errors[(atype, aid)],
                             }
                         })
 
@@ -650,27 +674,37 @@ class CharacterDesignerAgent(AgentInterface):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, run)
 
-        return self._build_payload(sid, chars_desc, sets_desc)
+        return self._build_payload(sid, chars_desc, sets_desc, errors=generation_errors)
 
     def _build_payload(self, sid: str, chars_desc: dict, sets_desc: dict,
-                       selected_chars: dict = None, selected_sets: dict = None) -> dict:
+                       selected_chars: dict = None, selected_sets: dict = None,
+                       errors: Dict[tuple[str, str], str] = None) -> dict:
         """构建返回给前端的 payload"""
         selected_chars = selected_chars or {}
         selected_sets = selected_sets or {}
+        errors = errors or {}
 
         characters = []
         for asset_id, info in chars_desc.items():
             desc = info.get("description", "") if isinstance(info, dict) else info
             name = info.get("name", "") if isinstance(info, dict) else ""
             sel = selected_chars.get(asset_id, "")
-            characters.append(self._build_asset_info(sid, 'characters', asset_id, name, desc, sel))
+            asset = self._build_asset_info(sid, 'characters', asset_id, name, desc, sel)
+            if errors.get(('characters', asset_id)):
+                asset["status"] = "failed"
+                asset["error"] = errors[('characters', asset_id)]
+            characters.append(asset)
 
         settings_list = []
         for asset_id, info in sets_desc.items():
             desc = info.get("description", "") if isinstance(info, dict) else info
             name = info.get("name", "") if isinstance(info, dict) else ""
             sel = selected_sets.get(asset_id, "")
-            settings_list.append(self._build_asset_info(sid, 'settings', asset_id, name, desc, sel))
+            asset = self._build_asset_info(sid, 'settings', asset_id, name, desc, sel)
+            if errors.get(('settings', asset_id)):
+                asset["status"] = "failed"
+                asset["error"] = errors[('settings', asset_id)]
+            settings_list.append(asset)
 
         # 图片生成完成即为阶段完成，用户选择图片只是更新数据
         return {

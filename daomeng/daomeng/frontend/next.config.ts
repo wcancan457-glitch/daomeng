@@ -60,6 +60,10 @@ const nextConfig: NextConfig = {
         destination: `${apiBase}/api/config`,
       },
       {
+        source: '/api/config/:path*',
+        destination: `${apiBase}/api/config/:path*`,
+      },
+      {
         source: '/api/cache/:path*',
         destination: `${apiBase}/api/cache/:path*`,
       },
