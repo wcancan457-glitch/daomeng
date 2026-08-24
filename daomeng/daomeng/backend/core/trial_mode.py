@@ -5,7 +5,6 @@ from __future__ import annotations
 import copy
 from typing import Any, Dict, List
 
-
 TRIAL_DURATION_SECONDS = 15
 # Two reference frames / video calls are enough for a 15-second proof-of-concept,
 # including providers whose single-clip maximum is below 15 seconds.
