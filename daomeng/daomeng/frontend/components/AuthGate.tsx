@@ -54,6 +54,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
   const [email, setEmail] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [password, setPassword] = useState('');
+  const [passwordConfirmation, setPasswordConfirmation] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -104,6 +105,10 @@ export default function AuthGate({ children }: { children: ReactNode }) {
       setError('密码至少需要 10 个字符。');
       return;
     }
+    if (formMode === 'register' && password !== passwordConfirmation) {
+      setError('两次输入的密码不一致，请重新确认。');
+      return;
+    }
     setSubmitting(true);
     setError('');
     try {
@@ -125,6 +130,7 @@ export default function AuthGate({ children }: { children: ReactNode }) {
         );
       }
       setPassword('');
+      setPasswordConfirmation('');
       setState('allowed');
     } catch (err) {
       setError(err instanceof Error ? err.message : '操作失败，请稍后再试');
@@ -215,6 +221,9 @@ export default function AuthGate({ children }: { children: ReactNode }) {
                       onClick={() => {
                         setFormMode(mode);
                         setError('');
+                        setPassword('');
+                        setPasswordConfirmation('');
+                        setShowPassword(false);
                       }}
                       className={`h-10 rounded-lg text-sm font-medium transition ${
                         formMode === mode
@@ -293,6 +302,33 @@ export default function AuthGate({ children }: { children: ReactNode }) {
                   </span>
                 </label>
 
+                {userMode && formMode === 'register' && (
+                  <label className="block text-sm font-medium text-slate-800" htmlFor="password-confirmation">
+                    确认密码
+                    <span className="relative mt-2 block">
+                      <KeyRound className="pointer-events-none absolute left-3.5 top-1/2 h-4.5 w-4.5 -translate-y-1/2 text-slate-500" />
+                      <input
+                        id="password-confirmation"
+                        type={showPassword ? 'text' : 'password'}
+                        value={passwordConfirmation}
+                        onChange={event => setPasswordConfirmation(event.target.value)}
+                        autoComplete="new-password"
+                        minLength={10}
+                        required
+                        aria-invalid={Boolean(passwordConfirmation && password !== passwordConfirmation)}
+                        aria-describedby="password-confirmation-hint"
+                        className="h-12 w-full rounded-xl bg-slate-100 pl-11 pr-4 text-slate-950 outline-none ring-1 ring-transparent transition placeholder:text-slate-500 focus:bg-white focus:ring-2 focus:ring-blue-600"
+                        placeholder="再次输入密码"
+                      />
+                    </span>
+                    <span id="password-confirmation-hint" className="mt-2 block text-xs leading-5 text-slate-600">
+                      {passwordConfirmation && password !== passwordConfirmation
+                        ? '两次输入的密码尚不一致'
+                        : '密码至少 10 个字符'}
+                    </span>
+                  </label>
+                )}
+
                 {error && (
                   <p className="rounded-xl bg-red-50 px-4 py-3 text-sm leading-5 text-red-800" role="alert">
                     {error}
@@ -301,7 +337,12 @@ export default function AuthGate({ children }: { children: ReactNode }) {
 
                 <button
                   type="submit"
-                  disabled={submitting || !password || (userMode && !email.trim())}
+                  disabled={
+                    submitting ||
+                    !password ||
+                    (userMode && !email.trim()) ||
+                    (formMode === 'register' && (!passwordConfirmation || password !== passwordConfirmation))
+                  }
                   className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#0b1d43] font-medium text-white shadow-[0_12px_28px_-16px_rgba(11,29,67,0.95)] transition hover:bg-[#132c5f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600 disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   {submitting ? (

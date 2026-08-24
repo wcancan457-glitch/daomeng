@@ -15,6 +15,26 @@ services:
         value: INFO
       - key: AUTH_REQUIRED
         value: "true"
+      - key: AUTH_MODE
+        value: users
+      - key: REGISTRATION_ENABLED
+        value: "true"
+      - key: AUTH_TOKEN_SECRET
+        generateValue: true
+      - key: SETTINGS_ENCRYPTION_KEY
+        generateValue: true
+      - key: AUTH_ACCESS_TOKEN_TTL_SECONDS
+        value: "900"
+      - key: AUTH_REFRESH_TOKEN_TTL_SECONDS
+        value: "2592000"
+      - key: AUTH_COOKIE_SECURE
+        value: "true"
+      - key: ADMIN_EMAIL
+        value: admin@daomeng.app
+      - key: DATABASE_URL
+        fromDatabase:
+          name: daomeng-db
+          property: connectionString
       - key: ALLOWED_ORIGINS
         value: https://daomeng.vercel.app
       - key: AUTH_TOKEN_TTL_SECONDS
@@ -37,3 +57,8 @@ services:
         sync: false
       - key: KLING_SECRET_KEY
         sync: false
+
+databases:
+  - name: daomeng-db
+    plan: free
+    ipAllowList: []
