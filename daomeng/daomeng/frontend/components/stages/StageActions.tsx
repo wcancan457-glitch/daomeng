@@ -27,6 +27,12 @@ interface StageActionsProps {
   isRunning: boolean;
   /** 已创建素材清单，但尚未主动启动本阶段的付费生成 */
   generationPrepared?: boolean;
+  /** 回退修改上游素材后，显式应用变更并使受影响的后续产物待重生成 */
+  onApplyChanges?: () => Promise<void>;
+  showApplyChanges?: boolean;
+  applyChangesDisabled?: boolean;
+  applyChangesLabel?: string;
+  confirmLabel?: string;
 }
 
 export default function StageActions({
@@ -42,8 +48,14 @@ export default function StageActions({
   showConfirm = true,
   isRunning,
   generationPrepared = false,
+  onApplyChanges,
+  showApplyChanges = false,
+  applyChangesDisabled = false,
+  applyChangesLabel = '确认修改并更新后续',
+  confirmLabel = '确认并继续',
 }: StageActionsProps) {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
+  const [applyState, setApplyState] = useState<'idle' | 'saving' | 'saved'>('idle');
 
   // 是否是"继续生成"阶段（2、3、4、5）
   const isContinueStage = STAGES_WITH_CONTINUE.includes(stageId);
@@ -68,6 +80,7 @@ export default function StageActions({
   const showSaveSelections = onSaveSelections && (status === 'waiting' || status === 'completed' || status === 'stopped');
   // "确认并继续"在 showConfirm=true 且 waiting/running/completed 时显示（stopped 状态不显示确认）
   const showConfirmBtn = showConfirm && (status === 'waiting' || status === 'running' || status === 'completed');
+  const showApplyBtn = Boolean(onApplyChanges) && showApplyChanges && status !== 'running';
   const requiresCompleteAssets = ['character_design', 'reference_generation', 'video_generation'].includes(stageId);
   const confirmDisabled = isRunning || (requiresCompleteAssets && hasPendingItems);
   const generateLabel = generationPrepared
@@ -89,7 +102,19 @@ export default function StageActions({
     }
   }, [onSaveSelections, saveState]);
 
-  if (!showRegen && !showActions && !showSaveSelections) return null;
+  const handleApplyClick = useCallback(async () => {
+    if (!onApplyChanges || applyState !== 'idle' || applyChangesDisabled) return;
+    setApplyState('saving');
+    try {
+      await onApplyChanges();
+      setApplyState('saved');
+      setTimeout(() => setApplyState('idle'), 1800);
+    } catch {
+      setApplyState('idle');
+    }
+  }, [applyChangesDisabled, applyState, onApplyChanges]);
+
+  if (!showRegen && !showActions && !showSaveSelections && !showApplyBtn) return null;
 
   return (
     <div className="border-t border-gray-200 bg-white px-4 sm:px-6 py-4 flex flex-wrap items-center justify-between gap-3 flex-shrink-0">
@@ -148,6 +173,25 @@ export default function StageActions({
             {saveState === 'saving' ? '正在保存...' : saveState === 'saved' ? '保存成功' : '保存选择'}
           </button>
         )}
+
+        {showApplyBtn && (
+          <button
+            type="button"
+            onClick={handleApplyClick}
+            disabled={applyState !== 'idle' || isRunning || applyChangesDisabled}
+            title={applyChangesDisabled ? '仍有素材未生成或未采用，请先处理完成' : '保存当前采用的素材，并只重置受影响的参考图和视频片段'}
+            className="flex min-w-[176px] items-center justify-center gap-2 rounded-lg bg-violet-600 px-5 py-2 text-sm font-medium text-white transition-colors hover:bg-violet-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-500 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:bg-violet-300"
+          >
+            {applyState === 'saving' ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : applyState === 'saved' ? (
+              <Check className="h-4 w-4" />
+            ) : (
+              <CheckCircle className="h-4 w-4" />
+            )}
+            {applyState === 'saving' ? '正在更新...' : applyState === 'saved' ? '素材已确认' : applyChangesLabel}
+          </button>
+        )}
         
         {showConfirmBtn && (
           <button
@@ -157,7 +201,7 @@ export default function StageActions({
             className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:bg-blue-300"
           >
             <CheckCircle className="w-4 h-4" />
-            确认并继续
+            {confirmLabel}
           </button>
         )}
       </div>

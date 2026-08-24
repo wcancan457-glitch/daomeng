@@ -7,7 +7,7 @@ from core.agents.character_agent import CharacterDesignerAgent
 from core.agents.reference_agent import ReferenceGeneratorAgent
 from core.agents.script_agent import ScriptWriterAgent
 from core.agents.video_agent import VideoDirectorAgent
-from core.orchestrator import WorkflowEngine
+from core.orchestrator import WorkflowEngine, WorkflowStage, WorkflowState
 from models.image_seedream import supports_sequential_image_generation
 from models.public_errors import is_retryable_media_error, public_image_error, public_video_error
 from models.video_seedance import SeedanceVideoClient
@@ -471,3 +471,75 @@ def test_character_generation_does_not_fall_back_to_text_when_uploaded_reference
     assert path is None
     assert calls == []
     assert "未调用图片模型" in evaluation["generation_error"]
+
+
+def test_confirming_updated_character_only_invalidates_dependent_segments() -> None:
+    engine = WorkflowEngine()
+    state = WorkflowState(session_id="material-confirmation-contract")
+    state.current_stage = WorkflowStage.VIDEO_GENERATION
+    state.artifacts = {
+        "character_design": {
+            "characters": [
+                {
+                    "id": "char_1",
+                    "name": "小雨",
+                    "selected": "code/result/image/new-xiaoyu.png",
+                    "confirmed_selected": "code/result/image/old-xiaoyu.png",
+                    "description": "白色衬衫配藏蓝百褶裙",
+                    "confirmed_description": "白色衬衫配藏蓝百褶裙",
+                },
+                {
+                    "id": "char_2",
+                    "name": "老师",
+                    "selected": "code/result/image/teacher.png",
+                    "confirmed_selected": "code/result/image/teacher.png",
+                    "description": "灰色西装",
+                    "confirmed_description": "灰色西装",
+                },
+            ],
+            "settings": [],
+        },
+        "storyboard": {
+            "episodes": [{
+                "segments": [
+                    {"segment_id": "seg_01", "characters": ["小雨"], "location": "教室"},
+                    {"segment_id": "seg_02", "characters": ["老师"], "location": "教室"},
+                ],
+            }],
+        },
+        "reference_generation": {
+            "scenes": [
+                {"id": "seg_01", "selected": "old-ref-1.png", "versions": ["old-ref-1.png"]},
+                {"id": "seg_02", "selected": "old-ref-2.png", "versions": ["old-ref-2.png"]},
+            ],
+        },
+        "video_generation": {
+            "clips": [
+                {"id": "seg_01", "selected": "old-video-1.mp4", "versions": ["old-video-1.mp4"]},
+                {"id": "seg_02", "selected": "old-video-2.mp4", "versions": ["old-video-2.mp4"]},
+            ],
+        },
+        "post_production": {"final_video": "old-final.mp4"},
+    }
+    incoming = {
+        "characters": state.artifacts["character_design"]["characters"],
+        "settings": [],
+    }
+
+    changed = engine._changed_character_materials(state, incoming)
+    invalidated = engine._invalidate_character_dependents(state, changed)
+
+    assert changed == {"characters": {"char_1"}, "settings": set()}
+    assert invalidated == {
+        "reference_generation": ["seg_01"],
+        "video_generation": ["seg_01"],
+    }
+    scenes = state.artifacts["reference_generation"]["scenes"]
+    clips = state.artifacts["video_generation"]["clips"]
+    assert scenes[0]["selected"] == ""
+    assert scenes[0]["versions"] == ["old-ref-1.png"]
+    assert scenes[1]["selected"] == "old-ref-2.png"
+    assert clips[0]["selected"] == ""
+    assert clips[1]["selected"] == "old-video-2.mp4"
+    assert "post_production" not in state.artifacts
+    assert state.current_stage == WorkflowStage.REFERENCE_GENERATION

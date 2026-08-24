@@ -17,7 +17,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set
 
-from accounts.media_store import persist_project_media, restore_project_media
+from accounts.media_store import persist_project_media, resolve_media_file, restore_project_media
 from accounts.ownership import all_project_payloads, load_project_payload, save_project_payload
 from core.agents import (
     CharacterDesignerAgent,
@@ -744,11 +744,18 @@ class WorkflowEngine:
             
             # 检查是否有待处理的“空数据占位”
             has_pending = False
+
+            def item_has_media(item: Any) -> bool:
+                return bool(
+                    isinstance(item, dict)
+                    and item.get("selected")
+                    and resolve_media_file(str(item.get("selected")))
+                )
             
             if s_val == "character_design":
                 chars = art.get("characters", [])
                 sets = art.get("settings", [])
-                if any(not c.get("selected") for c in chars) or any(not s.get("selected") for s in sets):
+                if any(not item_has_media(c) for c in chars) or any(not item_has_media(s) for s in sets):
                     has_pending = True
             elif s_val == "storyboard":
                 # 检查分镜阶段：如果存在剧集（episode）但其 segments 为空，视为 waiting
@@ -757,11 +764,11 @@ class WorkflowEngine:
                     has_pending = True
             elif s_val == "reference_generation":
                 scenes = art.get("scenes", [])
-                if not scenes or any(not s.get("selected") for s in scenes):
+                if not scenes or any(not item_has_media(s) for s in scenes):
                     has_pending = True
             elif s_val == "video_generation":
                 clips = art.get("clips", [])
-                if not clips or any(not c.get("selected") for c in clips):
+                if not clips or any(not item_has_media(c) for c in clips):
                     has_pending = True
             
             if has_pending:
@@ -1240,6 +1247,8 @@ class WorkflowEngine:
 
             current_status = state.status.get(current_stage_str)
             if current_status == "completed":
+                if current_stage_str == WorkflowStage.CHARACTER_DESIGN.value:
+                    self._snapshot_confirmed_character_materials(state)
                 # 直接进入下一阶段
                 state.status[current_stage_str] = "completed"
                 next_stage = self._get_next_stage(state.current_stage)
@@ -1269,14 +1278,207 @@ class WorkflowEngine:
             if not state:
                 raise KeyError(f"Session not found: {session_id}")
 
-            self._apply_artifact_update(state, stage, body if isinstance(body, dict) else {})
+            update_body = copy.deepcopy(body) if isinstance(body, dict) else {}
+            confirm_materials = stage == "character_design" and bool(
+                update_body.pop("_confirm_materials", False)
+            )
+            changed_assets = self._changed_character_materials(state, update_body) if confirm_materials else {
+                "characters": set(),
+                "settings": set(),
+            }
+            if confirm_materials:
+                missing_materials = self._missing_character_materials(state, update_body)
+                if missing_materials:
+                    raise ValueError(
+                        "以下素材文件无法读取，请重新生成或上传后再确认：" + "、".join(missing_materials)
+                    )
+
+            self._apply_artifact_update(state, stage, update_body)
+            invalidated_stage_ids: Dict[str, List[str]] = {}
+            if confirm_materials:
+                self._snapshot_confirmed_character_materials(state)
+                invalidated_stage_ids = self._invalidate_character_dependents(state, changed_assets)
             self._recalculate_all_statuses(state)
             self.save_session_to_disk(session_id)
             return {
                 "status": "ok",
                 "status_map": copy.deepcopy(state.status),
                 "artifact": copy.deepcopy(state.artifacts.get(stage)),
+                "invalidated_stage_ids": invalidated_stage_ids,
             }
+
+    @staticmethod
+    def _snapshot_confirmed_character_materials(state: WorkflowState) -> None:
+        artifact = state.artifacts.get("character_design", {})
+        if not isinstance(artifact, dict):
+            return
+        for key in ("characters", "settings"):
+            for item in artifact.get(key, []):
+                if not isinstance(item, dict):
+                    continue
+                item["confirmed_selected"] = item.get("selected") or ""
+                item["confirmed_description"] = item.get("description") or ""
+
+    @staticmethod
+    def _changed_character_materials(state: WorkflowState, body: Dict[str, Any]) -> Dict[str, Set[str]]:
+        current_artifact = state.artifacts.get("character_design", {})
+        downstream_exists = any(
+            isinstance(state.artifacts.get(stage), dict) and bool(state.artifacts.get(stage))
+            for stage in ("reference_generation", "video_generation", "post_production")
+        )
+        changed: Dict[str, Set[str]] = {"characters": set(), "settings": set()}
+        if not isinstance(current_artifact, dict):
+            return changed
+
+        for key in ("characters", "settings"):
+            current_items = {
+                item.get("id"): item
+                for item in current_artifact.get(key, [])
+                if isinstance(item, dict) and item.get("id")
+            }
+            incoming_items = {
+                item.get("id"): item
+                for item in body.get(key, [])
+                if isinstance(item, dict) and item.get("id")
+            }
+            for item_id, current in current_items.items():
+                incoming = incoming_items.get(item_id, {})
+                next_selected = incoming.get("selected", current.get("selected")) or ""
+                next_description = incoming.get("description", current.get("description")) or ""
+                confirmed_selected = current.get("confirmed_selected")
+                confirmed_description = current.get("confirmed_description")
+                legacy_unconfirmed = confirmed_selected is None and confirmed_description is None
+                if (
+                    (legacy_unconfirmed and downstream_exists)
+                    or (confirmed_selected is not None and next_selected != confirmed_selected)
+                    or (confirmed_description is not None and next_description != confirmed_description)
+                ):
+                    changed[key].add(str(item_id))
+        return changed
+
+    @staticmethod
+    def _missing_character_materials(state: WorkflowState, body: Dict[str, Any]) -> List[str]:
+        current_artifact = state.artifacts.get("character_design", {})
+        if not isinstance(current_artifact, dict):
+            return ["角色/场景素材"]
+        missing: List[str] = []
+        for key, label in (("characters", "角色"), ("settings", "场景")):
+            incoming_items = {
+                item.get("id"): item
+                for item in body.get(key, [])
+                if isinstance(item, dict) and item.get("id")
+            }
+            for current in current_artifact.get(key, []):
+                if not isinstance(current, dict) or not current.get("id"):
+                    continue
+                incoming = incoming_items.get(current.get("id"), {})
+                selected = incoming.get("selected", current.get("selected")) or ""
+                if not selected or not resolve_media_file(str(selected)):
+                    missing.append(f'{label}“{current.get("name") or current.get("id")}”')
+        return missing
+
+    @staticmethod
+    def _name_matches(value: str, candidates: Set[str]) -> bool:
+        clean = str(value or "").strip()
+        return bool(clean) and any(
+            candidate == clean or candidate in clean or clean in candidate
+            for candidate in candidates
+            if candidate
+        )
+
+    def _invalidate_character_dependents(
+        self,
+        state: WorkflowState,
+        changed_assets: Dict[str, Set[str]],
+    ) -> Dict[str, List[str]]:
+        changed_character_ids = changed_assets.get("characters", set())
+        changed_setting_ids = changed_assets.get("settings", set())
+        if not changed_character_ids and not changed_setting_ids:
+            return {}
+
+        character_artifact = state.artifacts.get("character_design", {})
+        characters = character_artifact.get("characters", []) if isinstance(character_artifact, dict) else []
+        settings = character_artifact.get("settings", []) if isinstance(character_artifact, dict) else []
+        changed_character_names = {
+            str(item.get("name") or "").strip()
+            for item in characters
+            if isinstance(item, dict) and str(item.get("id")) in changed_character_ids
+        }
+        changed_setting_names = {
+            str(item.get("name") or "").strip()
+            for item in settings
+            if isinstance(item, dict) and str(item.get("id")) in changed_setting_ids
+        }
+
+        affected_segment_ids: Set[str] = set()
+        storyboard = state.artifacts.get("storyboard", {})
+        if isinstance(storyboard, dict):
+            for episode in storyboard.get("episodes", []):
+                if not isinstance(episode, dict):
+                    continue
+                for segment in episode.get("segments", []):
+                    if not isinstance(segment, dict) or not segment.get("segment_id"):
+                        continue
+                    character_changed = any(
+                        self._name_matches(name, changed_character_names)
+                        for name in segment.get("characters", [])
+                    )
+                    setting_changed = self._name_matches(
+                        str(segment.get("location") or ""),
+                        changed_setting_names,
+                    )
+                    if character_changed or setting_changed:
+                        affected_segment_ids.add(str(segment["segment_id"]))
+
+        reference_artifact = state.artifacts.get("reference_generation", {})
+        reference_scenes = reference_artifact.get("scenes", []) if isinstance(reference_artifact, dict) else []
+        if not affected_segment_ids and reference_scenes:
+            # 旧会话缺少稳定的名称映射时，宁可要求重新确认全部参考图，也不能沿用错误角色。
+            affected_segment_ids = {
+                str(scene.get("id"))
+                for scene in reference_scenes
+                if isinstance(scene, dict) and scene.get("id")
+            }
+
+        invalidated_references: List[str] = []
+        for scene in reference_scenes:
+            if not isinstance(scene, dict) or str(scene.get("id")) not in affected_segment_ids:
+                continue
+            scene["selected"] = ""
+            scene["status"] = "failed"
+            scene["error"] = "第二阶段角色或场景素材已更新，请基于新素材重新生成本片段。"
+            scene["upstream_changed"] = True
+            invalidated_references.append(str(scene.get("id")))
+
+        video_artifact = state.artifacts.get("video_generation", {})
+        video_clips = video_artifact.get("clips", []) if isinstance(video_artifact, dict) else []
+        invalidated_videos: List[str] = []
+        for clip in video_clips:
+            if not isinstance(clip, dict) or str(clip.get("id")) not in affected_segment_ids:
+                continue
+            clip["selected"] = ""
+            clip["status"] = "pending"
+            clip["error"] = "上游角色或场景素材已更新，请先重新生成参考图。"
+            clip["upstream_changed"] = True
+            for key in tuple(clip):
+                if key == "provider" or key.startswith("provider_") or key == "elapsed_seconds":
+                    clip.pop(key, None)
+            invalidated_videos.append(str(clip.get("id")))
+
+        if invalidated_references or invalidated_videos:
+            state.artifacts.pop("post_production", None)
+            state.status[WorkflowStage.POST_PRODUCTION.value] = "pending"
+        if invalidated_references:
+            state.current_stage = WorkflowStage.REFERENCE_GENERATION
+            state.error = None
+            state.stage_progress.pop(WorkflowStage.REFERENCE_GENERATION.value, None)
+
+        result: Dict[str, List[str]] = {}
+        if invalidated_references:
+            result["reference_generation"] = invalidated_references
+        if invalidated_videos:
+            result["video_generation"] = invalidated_videos
+        return result
 
     def recover_seedance_video_task(self, session_id: str, clip_id: str, task_id: str) -> Dict[str, Any]:
         """Attach an already-succeeded Ark task to one project clip without creating a paid task."""
@@ -2040,15 +2242,7 @@ class WorkflowEngine:
     def _asset_exists(code_dir: str, path: str) -> bool:
         if not path:
             return False
-        raw = str(path).replace("\\", "/")
-        lower = raw.lower()
-        marker = lower.rfind("/code/")
-        if marker >= 0:
-            raw = raw[marker + len("/code/"):]
-        elif lower.startswith("code/"):
-            raw = raw[len("code/"):]
-        candidate = raw if os.path.isabs(raw) else os.path.join(code_dir, raw.lstrip('/'))
-        return os.path.exists(candidate)
+        return bool(resolve_media_file(path))
 
     @classmethod
     def _count_existing_assets(

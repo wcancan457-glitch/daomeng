@@ -1017,7 +1017,7 @@ export default function WorkflowPanel() {
         // 剧本阶段：直接保存整个 data 覆盖 artifact
         patch = selections;
       } else if (stageId === 'character_design') {
-        const { _editDescs, ...restSelections } = selections;
+        const { _editDescs, _confirmMaterials, ...restSelections } = selections;
         const chars = (art.characters || []).map((c: any) => ({
           ...c,
           selected: restSelections[c.id] || c.selected,
@@ -1028,7 +1028,11 @@ export default function WorkflowPanel() {
           selected: restSelections[s.id] || s.selected,
           description: _editDescs?.settings?.[s.id] ?? s.description,
         }));
-        patch = { characters: chars, settings: sets };
+        patch = {
+          characters: chars,
+          settings: sets,
+          ...(_confirmMaterials ? { _confirm_materials: true } : {}),
+        };
       } else if (stageId === 'storyboard') {
         // 分镜阶段：保存 shots 数据（排除 original_shots，只保留 artifact 需要的字段）
         const rest = Object.fromEntries(
@@ -1063,6 +1067,23 @@ export default function WorkflowPanel() {
         status: savedStatus === 'completed' ? 'completed' : savedStatus === 'waiting' ? 'waiting' : stageStates[stageId]?.status,
       });
       if (saved.status_map) setGlobalStatusMap(saved.status_map);
+      if (saved.status_map) {
+        setStageStates(prev => {
+          const next = { ...prev };
+          for (const [savedStageId, backendStatus] of Object.entries(saved.status_map || {})) {
+            if (!next[savedStageId]) continue;
+            next[savedStageId] = {
+              ...next[savedStageId],
+              status: normalizeStageStatus(backendStatus, next[savedStageId].status),
+            };
+          }
+          return next;
+        });
+      }
+
+      if (saved.invalidated_stage_ids?.reference_generation?.length) {
+        await handleResumeProject(sessionId, 'reference_generation');
+      }
 
       // 如果是分镜阶段保存，刷���第3和第4阶段的 artifact
       console.log('[handleSaveSelections] stageId:', stageId, 'patch:', patch);
@@ -1238,6 +1259,7 @@ export default function WorkflowPanel() {
         // actions remain available when the network is temporarily unavailable.
       }
       setActiveStage(nextStage);
+      router.push(`/?session=${sid}&stage=${nextStage}`);
       return;
     }
 
@@ -1357,10 +1379,11 @@ export default function WorkflowPanel() {
   // ── 返回首页 ──
   // 处理阶段点击，更新 URL
   const handleStageClick = (stage: string) => {
-    setActiveStage(stage);
     if (sessionId) {
-      router.push(`/?session=${sessionId}&stage=${stage}`);
+      void handleResumeProject(sessionId, stage);
+      return;
     }
+    setActiveStage(stage);
   };
 
   const handleGoHome = () => {

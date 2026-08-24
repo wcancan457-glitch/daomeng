@@ -317,6 +317,8 @@ async def update_artifact(session_id: str, stage: str, request: Request):
         return workflow_engine.update_artifact(session_id, stage, body if isinstance(body, dict) else {})
     except KeyError:
         raise HTTPException(404, "Session not found")
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
 
 
 

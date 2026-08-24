@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { Users, MapPin, RefreshCw, Save, X, ChevronLeft, ChevronRight, Loader, AlertCircle, ZoomIn, ImagePlus, Edit2, Upload } from 'lucide-react';
+import { Users, MapPin, RefreshCw, Save, X, ChevronLeft, ChevronRight, Loader, AlertCircle, ZoomIn, ImagePlus, Edit2, Upload, Check } from 'lucide-react';
 import type { StageViewProps } from './types';
 import { assetUrl, assetVersionLabel } from './utils';
 import { uploadArtifactImage } from '@/lib/workflowApi';
@@ -84,10 +84,20 @@ function ImageGallery({
             <div
               key={path}
               onClick={() => onSelect(path)}
+              onKeyDown={event => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  onSelect(path);
+                }
+              }}
+              role="button"
+              tabIndex={0}
+              aria-pressed={isSelected}
+              aria-label={`${assetVersionLabel(path, i)}，${isSelected ? '当前已采用' : '点击采用此版本'}`}
               className={`flex-shrink-0 cursor-pointer rounded-lg overflow-hidden transition-all ${
                 isSelected
-                  ? 'ring-3 ring-violet-500 shadow-lg shadow-violet-200'
-                  : 'ring-1 ring-gray-200 hover:ring-gray-300 hover:shadow-md'
+                  ? 'ring-3 ring-violet-500 shadow-lg shadow-violet-200 focus-visible:outline-none focus-visible:ring-4'
+                  : 'ring-1 ring-gray-200 hover:ring-gray-300 hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-violet-400'
               }`}
             >
               <div className="relative group/img h-32 min-w-44 bg-gray-50">
@@ -127,12 +137,13 @@ function ImageGallery({
                   <ZoomIn className="w-3 h-3 text-white" />
                 </button>
               </div>
-              <div className={`text-center text-[10px] py-0.5 ${
+              <div className={`flex items-center justify-center gap-1 py-1 text-[10px] ${
                 isSelected
                   ? 'bg-violet-500 text-white font-medium'
-                  : 'bg-gray-50 text-gray-400'
+                  : 'bg-gray-50 text-gray-600'
               }`}>
-                {assetVersionLabel(path, i)}
+                {isSelected && <Check className="h-3 w-3" />}
+                <span>{assetVersionLabel(path, i)} · {isSelected ? '已采用' : '点击采用'}</span>
               </div>
             </div>
           );
@@ -406,6 +417,7 @@ export default function CharacterStage({ state, sessionId, onConfirm, onInterven
   const [editingIds, setEditingIds] = useState<Set<string>>(new Set());
   const [uploadingIds, setUploadingIds] = useState<Set<string>>(new Set());
   const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
+  const [confirmError, setConfirmError] = useState('');
 
   const allAssets = React.useMemo(() => [...characters, ...settingsData], [characters, settingsData]);
 
@@ -524,6 +536,27 @@ export default function CharacterStage({ state, sessionId, onConfirm, onInterven
 
   const getCharSelected = (asset: AssetVersion) => selectedChars[asset.id] || asset.selected;
   const getSetSelected = (asset: AssetVersion) => selectedSets[asset.id] || asset.selected;
+  const selectedAssetCount = characters.filter(asset => Boolean(getCharSelected(asset))).length
+    + settingsData.filter(asset => Boolean(getSetSelected(asset))).length;
+
+  const handleConfirmMaterials = async () => {
+    if (!onSaveSelections) return;
+    setConfirmError('');
+    const selections: Record<string, any> = { _confirmMaterials: true };
+    characters.forEach(character => {
+      selections[character.id] = getCharSelected(character);
+    });
+    settingsData.forEach(setting => {
+      selections[setting.id] = getSetSelected(setting);
+    });
+    try {
+      await onSaveSelections(selections);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '确认素材失败，请稍后重试';
+      setConfirmError(message);
+      throw error;
+    }
+  };
 
   return (
     <div className="flex flex-col h-full">
@@ -535,6 +568,24 @@ export default function CharacterStage({ state, sessionId, onConfirm, onInterven
         <p className="text-sm text-gray-500 mb-6">
           生成角色4视图 (正面特写·正面全身·侧面全身·背面全身) 和场景全景图
         </p>
+
+        {allAssets.length > 0 && state.artifact?.generation_started !== false && (
+          <div className={`mb-5 rounded-xl border px-4 py-3 text-sm ${
+            selectedAssetCount === allAssets.length
+              ? 'border-emerald-200 bg-emerald-50 text-emerald-900'
+              : 'border-amber-200 bg-amber-50 text-amber-900'
+          }`} role="status">
+            <p className="font-medium">
+              已采用 {selectedAssetCount}/{allAssets.length} 项素材
+            </p>
+            <p className="mt-1 text-xs leading-relaxed opacity-80">
+              点击图片下方“点击采用”可切换版本。
+              {hasNextStageStarted
+                ? ' 修改完成后，请使用底部“确认素材并更新后续”，系统只会重置受影响的参考图和视频片段。'
+                : ' 全部采用后，使用底部“确认素材并继续”。'}
+            </p>
+          </div>
+        )}
 
         {state.artifact?.generation_started === false && (
           <div className="mb-5 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900">
@@ -549,6 +600,11 @@ export default function CharacterStage({ state, sessionId, onConfirm, onInterven
 
         {state.error && (
           <div className="text-sm text-red-600 bg-red-50 border border-red-200 p-4 rounded-xl mb-4">{state.error}</div>
+        )}
+        {confirmError && (
+          <div className="mb-4 rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700" role="alert">
+            {confirmError}
+          </div>
         )}
 
         {/* ═══ 角色列表 ═══ */}
@@ -631,6 +687,11 @@ export default function CharacterStage({ state, sessionId, onConfirm, onInterven
         hasNextStageStarted={hasNextStageStarted}
         isRunning={isRunning}
         generationPrepared={state.artifact?.generation_started === false}
+        confirmLabel="确认素材并继续"
+        onApplyChanges={handleConfirmMaterials}
+        showApplyChanges={Boolean(hasNextStageStarted)}
+        applyChangesDisabled={Boolean(hasPendingItems)}
+        applyChangesLabel="确认素材并更新后续"
       />
     </div>
   );

@@ -479,13 +479,21 @@ export async function saveSelections(
   sessionId: string,
   stage: string,
   selections: Record<string, any>,
-): Promise<{ status: string; status_map?: Record<string, string>; artifact?: any }> {
+): Promise<{
+  status: string;
+  status_map?: Record<string, string>;
+  artifact?: any;
+  invalidated_stage_ids?: Record<string, string[]>;
+}> {
   const resp = await authenticatedFetch(`/api/project/${sessionId}/artifact/${stage}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(selections),
   });
-  if (!resp.ok) throw new Error('保存选项失败');
+  if (!resp.ok) {
+    const error = await resp.json().catch(() => ({ detail: '保存选项失败' }));
+    throw new Error(error.detail || '保存选项失败');
+  }
   return resp.json();
 }
 
