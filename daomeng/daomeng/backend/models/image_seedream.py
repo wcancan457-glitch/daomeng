@@ -61,7 +61,7 @@ class SeedreamClient:
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        timeout: int = 120,
+        timeout: Optional[int] = None,
     ) -> None:
         """
         初始化 Seedream 客户端
@@ -73,6 +73,11 @@ class SeedreamClient:
         """
         self.api_key = api_key or Config.ARK_API_KEY
         self.base_url = base_url or Config.ARK_BASE_URL or "https://ark.cn-beijing.volces.com/api/v3"
+        if timeout is None:
+            try:
+                timeout = max(120, int(os.getenv("ARK_IMAGE_TIMEOUT_SECONDS", "600")))
+            except (TypeError, ValueError):
+                timeout = 600
         self.timeout = timeout
 
         if not self.api_key:
@@ -84,6 +89,9 @@ class SeedreamClient:
             "base_url": self.base_url,
             "api_key": self.api_key,
             "timeout": timeout,
+            # Agent-level retry logic owns the single bounded retry. Avoid the
+            # SDK silently multiplying paid image requests underneath it.
+            "max_retries": 0,
         }
         proxy = Config.provider_proxy("ark")
         if proxy:
@@ -199,7 +207,12 @@ class SeedreamClient:
                     with open(p, "rb") as f:
                         img_data = base64.b64encode(f.read()).decode("utf-8")
                     ext = os.path.splitext(p)[1].lower()
-                    mime = "image/png" if ext == ".png" else "image/jpeg"
+                    mime = {
+                        ".png": "image/png",
+                        ".webp": "image/webp",
+                        ".jpg": "image/jpeg",
+                        ".jpeg": "image/jpeg",
+                    }.get(ext, "image/jpeg")
                     ref_images.append(f"data:{mime};base64,{img_data}")
             extra_body["image"] = ref_images
 
@@ -256,7 +269,7 @@ class SeedreamClient:
             return file_path
         except Exception as e:
             logging.error(f"Failed to download image from {url}: {e}")
-            return None
+            raise RuntimeError("Seedream image download failed") from e
 
 
 if __name__ == "__main__":

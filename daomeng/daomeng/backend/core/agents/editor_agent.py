@@ -42,6 +42,16 @@ class VideoEditorAgent(AgentInterface):
             selected_clips: dict = input_data.get("selected_clips", {})
             if not selected_clips:
                 raise Exception("未找到选定的视频片段数据，请先完成阶段5")
+        else:
+            missing_clips = [
+                str(clip.get("name") or clip.get("id") or "未知片段")
+                for clip in clips_list
+                if not clip.get("selected") or not os.path.exists(str(clip.get("selected") or ""))
+            ]
+            if missing_clips:
+                raise Exception(
+                    "以下视频片段尚未生成完成，不能导出不完整成片：" + "、".join(missing_clips)
+                )
         
         self._report_progress("后期制作", "准备视频片段...", 5)
 
@@ -60,8 +70,7 @@ class VideoEditorAgent(AgentInterface):
                 for clip in clips_list:
                     path = clip.get("selected")
                     if not path or not os.path.exists(path):
-                        logger.warning(f"[{sid}] Clip missing: {clip.get('id')} → {path}")
-                        continue
+                        raise Exception(f"视频片段文件不存在：{clip.get('id')}")
                     
                     # 优先使用片段数据中的 episode 字段
                     ep_idx = clip.get("episode")

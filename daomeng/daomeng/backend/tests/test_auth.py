@@ -24,7 +24,8 @@ from sqlalchemy import select  # noqa: E402
 from accounts.database import SessionLocal  # noqa: E402
 from accounts.models import AdminAuditLog, SystemSetting, User  # noqa: E402
 from api.app import app  # noqa: E402
-from core.orchestrator import WorkflowEngine  # noqa: E402
+from api.dependencies import workflow_engine  # noqa: E402
+from core.orchestrator import WorkflowEngine, WorkflowStage  # noqa: E402
 from pipelines.storage import (  # noqa: E402
     TaskQuotaError,
     claim_next_pending_task,
@@ -393,6 +394,31 @@ def test_projects_and_tasks_are_isolated_by_user() -> None:
             files={"file": ("avatar.png", b"not an image", "image/png")},
         )
         assert invalid_artifact_image.status_code == 400
+
+        reference_upload = client.post(
+            f"/api/project/{project_id}/artifact/character_design/upload_image",
+            headers=auth_header(first_token),
+            data={"item_type": "characters", "item_id": "char_safe"},
+            files={"file": ("reference.png", image_buffer.getvalue(), "image/png")},
+        )
+        assert reference_upload.status_code == 200
+        uploaded_artifact = reference_upload.json()["artifact"]
+        uploaded_character = next(item for item in uploaded_artifact["characters"] if item["id"] == "char_safe")
+        assert uploaded_character.get("selected", "") == ""
+        assert len(uploaded_character["reference_images"]) == 1
+        assert "ReferenceInputs" in uploaded_character["reference_images"][0]
+
+        project_state = workflow_engine.get_state(project_id)
+        assert project_state is not None
+        project_state.current_stage = WorkflowStage.CHARACTER_DESIGN
+        project_state.status[WorkflowStage.CHARACTER_DESIGN.value] = "waiting"
+        blocked_continue = client.post(
+            f"/api/project/{project_id}/continue",
+            headers=auth_header(first_token),
+        )
+        assert blocked_continue.status_code == 200
+        assert blocked_continue.json()["status"] == "waiting"
+        assert "next_stage" not in blocked_continue.json()
 
         first_sessions = client.get("/api/sessions", headers=auth_header(first_token))
         second_sessions = client.get("/api/sessions", headers=auth_header(second_token))

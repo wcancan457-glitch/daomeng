@@ -435,7 +435,7 @@ export async function saveSelections(
   sessionId: string,
   stage: string,
   selections: Record<string, any>,
-): Promise<{ status: string }> {
+): Promise<{ status: string; status_map?: Record<string, string>; artifact?: any }> {
   const resp = await authenticatedFetch(`/api/project/${sessionId}/artifact/${stage}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },

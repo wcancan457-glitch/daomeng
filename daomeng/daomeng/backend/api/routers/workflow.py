@@ -89,7 +89,7 @@ async def start_project(req: ProjectStartRequest, request: Request):
         "video_reference_model": req.video_reference_model or getattr(settings, "VIDEO_REFERENCE_MODEL", ""),
         "video_generation_mode": req.video_generation_mode or getattr(settings, "VIDEO_GENERATION_MODE", "first_frame"),
         "video_model": req.video_model,
-        "enable_concurrency": req.enable_concurrency if req.enable_concurrency is not None else True,
+        "enable_concurrency": req.enable_concurrency if req.enable_concurrency is not None else False,
         "web_search": req.web_search if req.web_search is not None else False,
         "episodes": 1 if req.creation_mode == "trial" else (req.episodes if req.episodes is not None else 4),
         "creation_mode": "trial" if req.creation_mode == "trial" else "full",

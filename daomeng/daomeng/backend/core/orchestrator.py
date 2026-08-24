@@ -1173,13 +1173,17 @@ class WorkflowEngine:
             # 如果是 waiting，可能需要阻止进入下一阶段，除非业务允许强制通过
             # 这里我们遵循用户逻辑：如果有空数据，显示为 waiting，用户需要解决它才能真正 completed。
             if state.status.get(current_stage_str) == "waiting":
-                # 如果是 waiting 状态，通常不应该自动跳到下一阶段
-                # 但如果用户点击了“继续”，可能是想补全或者强制进入
-                pass
-            # 注意：只有当阶段真正完成（waiting 或 completed）时才允许继续
+                return {
+                    "status": "waiting",
+                    "openclaw": "当前阶段仍有未完成或未选择的内容，请先补齐后再继续。",
+                    "message": "当前阶段仍有未完成或未选择的内容，请先补齐后再继续。",
+                    "current_status": "waiting",
+                    "status_map": copy.deepcopy(state.status),
+                }
+            # 只有阶段真正 completed 时才允许进入下一阶段。
 
             current_status = state.status.get(current_stage_str)
-            if current_status == "waiting" or current_status == "completed":
+            if current_status == "completed":
                 # 直接进入下一阶段
                 state.status[current_stage_str] = "completed"
                 next_stage = self._get_next_stage(state.current_stage)
@@ -1403,7 +1407,7 @@ class WorkflowEngine:
         """Save a user-provided image and attach it to the target artifact item."""
         from PIL import Image, UnidentifiedImageError
 
-        allowed_exts = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+        allowed_exts = {".jpg", ".jpeg", ".png", ".webp"}
         ext = os.path.splitext(filename or "")[1].lower() or ".png"
         if ext not in allowed_exts:
             raise ValueError(f"仅支持 {', '.join(sorted(allowed_exts))} 格式的图片")
@@ -1456,20 +1460,24 @@ class WorkflowEngine:
                 target = {"id": item_id, "name": item_id, "description": "", "versions": []}
                 items.append(target)
 
-            versions = target.get("versions")
-            if not isinstance(versions, list):
-                versions = []
-            if relative_path not in versions:
-                versions.append(relative_path)
-            target["versions"] = versions
-            target["selected"] = relative_path
-            target["status"] = "done"
+            # User uploads are inputs to the selected image model, not final
+            # generated versions. Keep them separate so generation is not
+            # skipped and the generated result can still be reviewed.
+            reference_images = target.get("reference_images")
+            if not isinstance(reference_images, list):
+                reference_images = []
+            if relative_path not in reference_images:
+                reference_images.append(relative_path)
+            target["reference_images"] = reference_images
+            if not target.get("selected"):
+                target["status"] = "pending"
 
             self._recalculate_all_statuses(state)
             self.save_session_to_disk(session_id)
             return {
                 "status": "ok",
                 "path": relative_path,
+                "reference_images": copy.deepcopy(reference_images),
                 "item_id": item_id,
                 "item_type": item_type,
                 "artifact": copy.deepcopy(state.artifacts.get(stage)),
@@ -1480,12 +1488,12 @@ class WorkflowEngine:
     def _upload_item_config(stage: str, item_type: str, item_id: str) -> Dict[str, str]:
         if stage == "character_design" and item_type == "characters":
             base = item_id if item_id.startswith("char_") else f"char_{item_id}"
-            return {"list_key": "characters", "dir": os.path.join("Assets", "characters"), "base": base}
+            return {"list_key": "characters", "dir": os.path.join("ReferenceInputs", "characters"), "base": base}
         if stage == "character_design" and item_type == "settings":
             base = item_id if item_id.startswith("set_") else f"set_{item_id}"
-            return {"list_key": "settings", "dir": os.path.join("Assets", "settings"), "base": base}
+            return {"list_key": "settings", "dir": os.path.join("ReferenceInputs", "settings"), "base": base}
         if stage == "reference_generation" and item_type == "scenes":
-            return {"list_key": "scenes", "dir": "Scenes", "base": item_id}
+            return {"list_key": "scenes", "dir": os.path.join("ReferenceInputs", "scenes"), "base": item_id}
         raise ValueError("Unsupported upload target")
 
     @staticmethod

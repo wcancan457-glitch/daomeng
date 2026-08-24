@@ -86,7 +86,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
   const [selectedResolution, setSelectedResolution] = useState('720P');
   const [configLoading, setConfigLoading] = useState(true);
   const [configError, setConfigError] = useState('');
-  const [enableConcurrency, setEnableConcurrency] = useState(true);
+  const [enableConcurrency, setEnableConcurrency] = useState(false);
   const [webSearch, setWebSearch] = useState(false);
   const [episodes, setEpisodes] = useState(4);
   const [showEpisodesPanel, setShowEpisodesPanel] = useState(false);
@@ -678,7 +678,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
                     onChange={e => setEnableConcurrency(e.target.checked)}
                     className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500/30"
                   />
-                  <span className="text-gray-600">并发生成</span>
+                  <span className="text-gray-600">并发生成（测试阶段建议关闭）</span>
                 </label>
                 </div>
               </div>

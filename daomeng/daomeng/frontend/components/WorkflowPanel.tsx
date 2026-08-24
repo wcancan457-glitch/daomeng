@@ -694,6 +694,7 @@ export default function WorkflowPanel() {
         creation_mode: 'expanded',
         trial_duration_seconds: 15,
         auto_mode: true,
+        generation_requested: true,
       };
 
       for (const stageId of STAGE_ORDER) {
@@ -759,6 +760,7 @@ export default function WorkflowPanel() {
           video_model: projectParams?.video_model,
           video_ratio: projectParams?.video_ratio,
           video_resolution: projectParams?.video_resolution,
+          enable_concurrency: projectParams?.enable_concurrency,
           video_sound: 'on',
           video_shot_type: 'multi',
         };
@@ -1044,9 +1046,12 @@ export default function WorkflowPanel() {
       handleUpdateArtifact(stageId, patch);
 
       // 服务端持久化
-      await saveSelections(sessionId, stageId, patch);
-      // 保存成功后标记为已完成，顶栏显示对勾
-      updateStageState(stageId, { status: 'completed' });
+      const saved = await saveSelections(sessionId, stageId, patch);
+      const savedStatus = saved.status_map?.[stageId];
+      updateStageState(stageId, {
+        status: savedStatus === 'completed' ? 'completed' : savedStatus === 'waiting' ? 'waiting' : stageStates[stageId]?.status,
+      });
+      if (saved.status_map) setGlobalStatusMap(saved.status_map);
 
       // 如果是分镜阶段保存，刷���第3和第4阶段的 artifact
       console.log('[handleSaveSelections] stageId:', stageId, 'patch:', patch);
@@ -1132,12 +1137,11 @@ export default function WorkflowPanel() {
     stoppedRef.current = false;
     setIsRunning(true);
 
-    // 清空当前阶段状态
+    // 保留当前素材清单和用户上传的参考图，只切换到生成状态。
     updateStageState(stageId, {
       status: 'running',
       progress: 0,
-      progressMessage: '重新生成中...',
-      artifact: null,
+      progressMessage: '正在生成...',
       error: null,
     });
 
@@ -1168,6 +1172,8 @@ export default function WorkflowPanel() {
         video_model: projectParams?.video_model,
         video_ratio: projectParams?.video_ratio,
         video_resolution: projectParams?.video_resolution,
+        enable_concurrency: projectParams?.enable_concurrency,
+        generation_requested: true,
       };
 
       // 尝试获取场景数
@@ -1181,8 +1187,9 @@ export default function WorkflowPanel() {
       await runStage(sessionId, stageId, inputData);
 
       const status = await getProjectStatus(sessionId);
-      if (status?.status?.[stageId] === 'waiting') {
-        updateStageState(stageId, { status: 'waiting' });
+      const nextStatus = status?.status?.[stageId];
+      if (nextStatus === 'waiting' || nextStatus === 'completed') {
+        updateStageState(stageId, { status: nextStatus });
         setActiveStage(stageId);
       }
     } catch (error: any) {

@@ -13,6 +13,7 @@ import json
 import logging
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
@@ -187,12 +188,14 @@ class ReferenceGeneratorAgent(AgentInterface):
 
         # 建立 scene_id 到 selected 路径的映射
         selected_map = {}
+        reference_map = {}
         if session_data and "artifacts" in session_data:
             ref_gen = session_data["artifacts"].get("reference_generation", {})
             for scene in ref_gen.get("scenes", []):
                 sid_in_json = scene.get("id")
                 if sid_in_json:
                     selected_map[sid_in_json] = scene.get("selected", "")
+                    reference_map[sid_in_json] = scene.get("reference_images", [])
 
         for idx, seg in enumerate(segments, 1):
             segment_id = seg.get('segment_id', f'seg_unk_{idx}')
@@ -216,6 +219,7 @@ class ReferenceGeneratorAgent(AgentInterface):
                 "description": plot,
                 "selected": selected_path,
                 "versions": versions,
+                "reference_images": reference_map.get(segment_id, []),
                 "status": "done" if versions else "pending",
             })
         return preview
@@ -263,7 +267,7 @@ class ReferenceGeneratorAgent(AgentInterface):
         最多生成 max_versions 个版本，如果所有版本都没有达到硬性合格标准，
         使用 VLM 选择最好的一张作为最终参考图。
         """
-        from models.public_errors import public_image_error
+        from models.public_errors import is_retryable_media_error, public_image_error
 
         segment_id = segment.get('segment_id', '')
 
@@ -351,6 +355,10 @@ class ReferenceGeneratorAgent(AgentInterface):
             except Exception as e:
                 logger.error(f"Segment {segment_id} image generation failed: {e}")
                 last_error = public_image_error(e, "Seedream / 图片模型")
+                if version == 0 and is_retryable_media_error(e):
+                    time.sleep(2)
+                    continue
+                break
 
         # 所有版本都没有达到硬性标准，使用 VLM 选择最好的
         if all_versions:
@@ -514,6 +522,7 @@ class ReferenceGeneratorAgent(AgentInterface):
         # 建立 scene_id 到 selected 路径的映射
         selected_map = {}
         existing_prompts = {}
+        reference_map = {}
         if session_data and "artifacts" in session_data:
             ref_gen = session_data["artifacts"].get("reference_generation", {})
             for scene in ref_gen.get("scenes", []):
@@ -521,6 +530,7 @@ class ReferenceGeneratorAgent(AgentInterface):
                 if sid_in_json:
                     selected_map[sid_in_json] = scene.get("selected", "")
                     existing_prompts[sid_in_json] = scene.get("visual_prompt", "")
+                    reference_map[sid_in_json] = scene.get("reference_images", [])
 
         for idx, seg in enumerate(segments, 1):
             segment_id = seg.get('segment_id', f'seg_unk_{idx}')
@@ -549,6 +559,7 @@ class ReferenceGeneratorAgent(AgentInterface):
                 "visual_prompt": visual_prompt,
                 "selected": selected_path,
                 "versions": versions,
+                "reference_images": reference_map.get(segment_id, []),
                 "status": status,
             }
             if errors.get(segment_id):
@@ -558,6 +569,7 @@ class ReferenceGeneratorAgent(AgentInterface):
             "payload": {
                 "session_id": sid,
                 "scenes": scenes,
+                "generation_started": True,
             },
             "stage_completed": True,
         }
@@ -582,7 +594,7 @@ class ReferenceGeneratorAgent(AgentInterface):
         it2i = self._require_input(input_data, "image_it2i_model")
         vlm_model = self._require_input(input_data, "vlm_model")
         # 根据 enable_concurrency 决定并发数
-        enable_concurrency = input_data.get("enable_concurrency", True)
+        enable_concurrency = input_data.get("enable_concurrency", False)
         logger.info(f"[ReferenceAgent] enable_concurrency={enable_concurrency}")
         # 取 t2i 和 it2i 中的最大并发数
         from models.config_model import get_max_concurrency
@@ -599,12 +611,18 @@ class ReferenceGeneratorAgent(AgentInterface):
         
         # 提取已经存在于 session 中的 visual_prompts
         session_visual_prompts = {}
+        scene_reference_map: Dict[str, List[str]] = {}
         ref_gen = artifacts.get("reference_generation", {})
         for scene in ref_gen.get("scenes", []):
             sid_in_json = scene.get("id")
             vp = scene.get("visual_prompt")
             if sid_in_json and vp:
                 session_visual_prompts[sid_in_json] = vp
+            if sid_in_json:
+                scene_reference_map[sid_in_json] = [
+                    path for path in scene.get("reference_images", [])
+                    if path and os.path.exists(path)
+                ]
 
         img_client = ImageClient(
             dashscope_api_key=settings.DASHSCOPE_API_KEY,
@@ -721,6 +739,7 @@ class ReferenceGeneratorAgent(AgentInterface):
                         logger.info(f"[{segment_id}] first-frame prompt: {ff_prompt}...")
 
                         refs = self._collect_refs(seg, asset_map, char_id_map, setting_id_map)
+                        refs = list(dict.fromkeys(refs + scene_reference_map.get(segment_id, [])))[:10]
                         char_desc, set_desc = self._get_descriptions(
                             seg, char_id_map, setting_id_map, character_json
                         )
@@ -800,6 +819,17 @@ class ReferenceGeneratorAgent(AgentInterface):
         preview = self._build_preview(sid, segments, session_data)
         self._report_progress("参考图", "加载分镜列表", 8, data={"assets_preview": {"scenes": preview}})
 
+        if not input_data.get("generation_requested"):
+            return {
+                "payload": {
+                    "session_id": sid,
+                    "scenes": preview,
+                    "generation_started": False,
+                },
+                "requires_intervention": True,
+                "stage_completed": False,
+            }
+
         first_frame_prompts = {}  # 提升作用域，用于最后写回结果文件
         selected_images_map = {}  # 提升作用域，记录本轮新生成且 VLM 挑选出来的图片路径
 
@@ -877,6 +907,7 @@ class ReferenceGeneratorAgent(AgentInterface):
                     logger.info(f"[{segment_id}] Prompt ready, starting image generation...")
 
                     refs = self._collect_refs(seg, asset_map, char_id_map, setting_id_map)
+                    refs = list(dict.fromkeys(refs + scene_reference_map.get(segment_id, [])))[:10]
                     char_desc, set_desc = self._get_descriptions(seg, char_id_map, setting_id_map, character_json)
                     result_segment_id, result_path, eval_result = self._generate_one(
                         img_client, sid,

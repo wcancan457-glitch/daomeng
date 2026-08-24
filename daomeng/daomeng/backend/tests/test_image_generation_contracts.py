@@ -1,7 +1,11 @@
+import asyncio
+
 from core.agents.character_agent import CharacterDesignerAgent
+from core.agents.reference_agent import ReferenceGeneratorAgent
 from core.agents.script_agent import ScriptWriterAgent
+from core.agents.video_agent import VideoDirectorAgent
 from models.image_seedream import supports_sequential_image_generation
-from models.public_errors import public_image_error
+from models.public_errors import is_retryable_media_error, public_image_error
 
 
 def test_seedream_full_does_not_receive_unsupported_sequential_parameter() -> None:
@@ -38,3 +42,83 @@ def test_seedream_parameter_and_safety_errors_are_actionable() -> None:
         RuntimeError("OutputImageSensitiveContentDetected"),
         "Seedream",
     )
+    assert is_retryable_media_error(TimeoutError("request timed out")) is True
+    assert is_retryable_media_error(RuntimeError("401 unauthorized")) is False
+
+
+def test_paid_media_stages_prepare_before_generation() -> None:
+    base = {
+        "session_id": "prepare-contract",
+        "style": "realistic",
+        "llm_model": "Qwen/Qwen2.5-72B-Instruct",
+        "vlm_model": "Qwen/Qwen2.5-VL-72B-Instruct",
+        "image_t2i_model": "doubao-seedream-5-0-260128",
+        "image_it2i_model": "doubao-seedream-5-0-260128",
+        "video_generation_mode": "first_frame",
+        "video_first_frame_model": "doubao-seedance-2-0-260128",
+        "enable_concurrency": False,
+    }
+    script_artifact = {
+        "characters": [{"character_id": "char_1", "name": "小雨", "description": "16岁女生", "species": "人类"}],
+        "settings": [{"setting_id": "set_1", "name": "天台", "description": "学校天台"}],
+    }
+    character_input = {
+        **base,
+        "_session_artifacts": {
+            "script_generation": script_artifact,
+            "character_design": {
+                "characters": [{"id": "char_1", "reference_images": ["code/reference.png"]}],
+                "settings": [],
+            },
+        },
+    }
+    character_result = asyncio.run(CharacterDesignerAgent().process(character_input))
+    assert character_result["requires_intervention"] is True
+    assert character_result["payload"]["generation_started"] is False
+    assert character_result["payload"]["characters"][0]["reference_images"] == ["code/reference.png"]
+
+    storyboard = {
+        "episodes": [{
+            "episode_number": 1,
+            "segments": [{
+                "segment_id": "seg_01_01",
+                "episode_number": 1,
+                "segment_number": 1,
+                "location": "天台",
+                "characters": ["小雨"],
+                "shots": [{"content": "小雨走向栏杆", "duration": 5}],
+                "total_duration": 5,
+            }],
+        }],
+    }
+    generated_character_artifact = {
+        "characters": [{"id": "char_1", "name": "小雨", "selected": "code/char.png"}],
+        "settings": [{"id": "set_1", "name": "天台", "selected": "code/set.png"}],
+    }
+    reference_input = {
+        **base,
+        "_session_artifacts": {
+            "script_generation": script_artifact,
+            "character_design": generated_character_artifact,
+            "storyboard": storyboard,
+            "reference_generation": {"scenes": []},
+        },
+    }
+    reference_result = asyncio.run(ReferenceGeneratorAgent().process(reference_input))
+    assert reference_result["requires_intervention"] is True
+    assert reference_result["payload"]["generation_started"] is False
+
+    video_input = {
+        **base,
+        "_session_artifacts": {
+            "storyboard": storyboard,
+            "character_design": generated_character_artifact,
+            "reference_generation": {
+                "scenes": [{"id": "seg_01_01", "selected": "code/scene.png"}],
+            },
+            "video_generation": {"clips": []},
+        },
+    }
+    video_result = asyncio.run(VideoDirectorAgent().process(video_input))
+    assert video_result["requires_intervention"] is True
+    assert video_result["payload"]["generation_started"] is False

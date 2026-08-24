@@ -18,6 +18,7 @@ interface AssetVersion {
   versions: string[];     // 所有历史版本路径
   status?: 'pending' | 'done' | 'failed' | 'running';  // 生成状态
   error?: string;
+  reference_images?: string[];
 }
 
 /* ─── 水平滚动图片画廊 ─── */
@@ -112,7 +113,9 @@ function ImageGallery({
                 </button>
               </div>
               <div className={`text-center text-[10px] py-0.5 ${
-                isSelected ? 'bg-violet-500 text-white font-medium' : 'bg-gray-50 text-gray-400'
+                isSelected
+                  ? 'bg-violet-500 text-white font-medium'
+                  : 'bg-gray-50 text-gray-400'
               }`}>
                 {assetVersionLabel(path, i)}
               </div>
@@ -155,6 +158,7 @@ function AssetRow({
   isStageRunning,
   isRegenerating,
   isUploading,
+  uploadError,
 }: {
   asset: AssetVersion;
   type: 'character' | 'setting';
@@ -170,6 +174,7 @@ function AssetRow({
   isStageRunning?: boolean;
   isRegenerating?: boolean;
   isUploading?: boolean;
+  uploadError?: string;
 }) {
   const isRunning = asset.status === 'running' || isRegenerating;
   const isPending = asset.status === 'pending';
@@ -257,10 +262,10 @@ function AssetRow({
               : 'text-gray-600 bg-gray-100 hover:bg-gray-200 cursor-pointer'
           }`}>
             {isUploading ? <Loader className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
-            {isUploading ? '上传中...' : '上传照片'}
+            {isUploading ? '上传中...' : '上传 AI 参考图'}
             <input
               type="file"
-              accept="image/*"
+              accept=".jpg,.jpeg,.png,.webp"
               className="hidden"
               disabled={isUploading}
               onChange={e => {
@@ -271,6 +276,24 @@ function AssetRow({
             />
           </label>
         </div>
+        {!!asset.reference_images?.length && (
+          <div className="mt-3" aria-label={`已上传 ${asset.reference_images.length} 张 AI 参考图`}>
+            <p className="mb-1.5 text-[11px] font-medium text-violet-700">
+              AI 生成将参考以下 {asset.reference_images.length} 张图片
+            </p>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {asset.reference_images.map((path, index) => (
+                <img
+                  key={path}
+                  src={assetUrl(path)}
+                  alt={`${asset.name} AI参考图 ${index + 1}`}
+                  className="h-12 w-12 shrink-0 rounded-lg border border-violet-200 object-cover"
+                />
+              ))}
+            </div>
+          </div>
+        )}
+        {uploadError && <p className="mt-2 text-[11px] text-red-600" role="alert">{uploadError}</p>}
         {isFailed && asset.error && (
           <p className="mt-2 line-clamp-3 break-words text-[11px] leading-relaxed text-red-600" role="alert" title={asset.error}>
             {asset.error}
@@ -283,8 +306,8 @@ function AssetRow({
         {isPending && !hasImage ? (
           <div className="flex items-center justify-center h-32 aspect-video bg-gray-50 rounded-lg border border-dashed border-gray-200">
             <div className="flex items-center gap-2 text-gray-400 text-xs">
-              <Loader className="w-4 h-4 animate-spin" />
-              <span>正在生成...</span>
+              <ImagePlus className="w-4 h-4" />
+              <span>等待开始 AI 生成</span>
             </div>
           </div>
         ) : !hasImage ? (
@@ -298,7 +321,7 @@ function AssetRow({
                     <button
                       onClick={onRegenerate}
                       disabled={isRegenerating}
-                      className="mt-1 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-red-600 bg-red-50 hover:bg-red-100 transition-colors disabled:text-gray-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      className="mt-1 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-red-600 bg-red-50 hover:bg-red-100 transition-colors disabled:text-red-300 disabled:cursor-not-allowed"
                     >
                       <RefreshCw className="w-2.5 h-2.5" />
                       点击重试
@@ -313,7 +336,7 @@ function AssetRow({
                     <button
                       onClick={onRegenerate}
                       disabled={isRegenerating}
-                      className="mt-1 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 transition-colors disabled:text-gray-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      className="mt-1 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-violet-600 bg-violet-50 hover:bg-violet-100 transition-colors disabled:text-violet-300 disabled:cursor-not-allowed"
                     >
                       <RefreshCw className="w-2.5 h-2.5" />
                       生成
@@ -367,6 +390,7 @@ export default function CharacterStage({ state, sessionId, onConfirm, onInterven
   const regenerationStartCounts = useRef<Record<string, number>>({});
   const [editingIds, setEditingIds] = useState<Set<string>>(new Set());
   const [uploadingIds, setUploadingIds] = useState<Set<string>>(new Set());
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
 
   const allAssets = React.useMemo(() => [...characters, ...settingsData], [characters, settingsData]);
 
@@ -425,6 +449,7 @@ export default function CharacterStage({ state, sessionId, onConfirm, onInterven
 
   const handleUploadImage = async (type: 'characters' | 'settings', id: string, file: File) => {
     setUploadingIds(prev => new Set(prev).add(id));
+    setUploadErrors(prev => ({ ...prev, [id]: '' }));
     try {
       const result = await uploadArtifactImage(sessionId, 'character_design', type, id, file);
       const artifact = result.artifact;
@@ -434,16 +459,9 @@ export default function CharacterStage({ state, sessionId, onConfirm, onInterven
           settings: artifact.settings || [],
         });
       }
-      if (artifact?.characters) {
-        const char = artifact.characters.find((item: AssetVersion) => item.id === id);
-        if (char?.selected) setSelectedChars(prev => ({ ...prev, [id]: char.selected }));
-      }
-      if (artifact?.settings) {
-        const setting = artifact.settings.find((item: AssetVersion) => item.id === id);
-        if (setting?.selected) setSelectedSets(prev => ({ ...prev, [id]: setting.selected }));
-      }
     } catch (error) {
       console.error('上传图片失败:', error);
+      setUploadErrors(prev => ({ ...prev, [id]: error instanceof Error ? error.message : '上传参考图失败' }));
     } finally {
       setUploadingIds(prev => {
         const next = new Set(prev);
@@ -503,6 +521,12 @@ export default function CharacterStage({ state, sessionId, onConfirm, onInterven
           生成角色4视图 (正面特写·正面全身·侧面全身·背面全身) 和场景全景图
         </p>
 
+        {state.artifact?.generation_started === false && (
+          <div className="mb-5 rounded-xl border border-violet-200 bg-violet-50 px-4 py-3 text-sm text-violet-900">
+            先为需要保持一致的人物或场景上传 AI 参考图；准备完成后，点击底部“开始 AI 生图”。上传图片只作为模型输入，不会直接当作生成结果。
+          </div>
+        )}
+
         {/* 运行中 */}
         {state.status === 'running' && (
           <StageProgress message={state.progressMessage} fallback="正在生成角色与场景..." progress={state.progress} color="violet" />
@@ -537,6 +561,7 @@ export default function CharacterStage({ state, sessionId, onConfirm, onInterven
                   isStageRunning={state.status === 'running'}
                   isRegenerating={regeneratingIds.has(asset.id)}
                   isUploading={uploadingIds.has(asset.id)}
+                  uploadError={uploadErrors[asset.id]}
                 />
               ))}
             </div>
@@ -568,6 +593,7 @@ export default function CharacterStage({ state, sessionId, onConfirm, onInterven
                   isStageRunning={state.status === 'running'}
                   isRegenerating={regeneratingIds.has(asset.id)}
                   isUploading={uploadingIds.has(asset.id)}
+                  uploadError={uploadErrors[asset.id]}
                 />
               ))}
             </div>
@@ -589,6 +615,7 @@ export default function CharacterStage({ state, sessionId, onConfirm, onInterven
         hasPendingItems={hasPendingItems}
         hasNextStageStarted={hasNextStageStarted}
         isRunning={isRunning}
+        generationPrepared={state.artifact?.generation_started === false}
       />
     </div>
   );

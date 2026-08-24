@@ -18,6 +18,7 @@ interface ClipItem {
   selected: string;       // 当前选中的视频路径
   versions: string[];     // 所有历史版本路径
   status?: 'pending' | 'done' | 'failed' | 'running';
+  error?: string;
 }
 
 /* ─── 水平滚动视频画廊 ─── */
@@ -96,7 +97,9 @@ function VideoGallery({
                 )}
               </div>
               <div className={`text-center text-[10px] py-1 ${
-                isSelected ? 'bg-rose-500 text-white font-medium' : 'bg-gray-50 text-gray-400'
+                isSelected
+                  ? 'bg-rose-500 text-white font-medium'
+                  : 'bg-gray-50 text-gray-400'
               }`}>
                 v{i + 1}
               </div>
@@ -248,6 +251,11 @@ function ClipRow({
             <RefreshCw className="w-3 h-3" />
             {isFailed ? '点击重试' : hasVideo ? '重新生成' : '生成'}
           </button>
+        )}
+        {isFailed && clip.error && (
+          <p className="mt-2 break-words text-[11px] leading-relaxed text-red-600" role="alert">
+            {clip.error}
+          </p>
         )}
       </div>
 
@@ -522,6 +530,11 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
           将场景参考图转化为视频片段，支持逐项重新生成
         </p>
 
+        {state.artifact?.generation_started === false && (
+          <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
+            视频任务尚未提交。请先检查每个片段的首帧参考图和时长，确认无误后点击底部“开始生成视频”。
+          </div>
+        )}
         {/* 运行中 */}
         {state.status === 'running' && (
           <StageProgress message={state.progressMessage} fallback="正在生成视频..." progress={state.progress} color="rose" />
@@ -617,6 +630,7 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
         hasPendingItems={hasPendingItems}
         hasNextStageStarted={hasNextStageStarted}
         isRunning={isRunning}
+        generationPrepared={state.artifact?.generation_started === false}
       />
     </div>
   );

@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
@@ -133,37 +134,51 @@ class CharacterDesignerAgent(AgentInterface):
 
     # ─── 图片生成 ───
 
-    def _build_preview(self, sid: str, chars_desc: dict, sets_desc: dict) -> dict:
+    def _build_preview(self, sid: str, chars_desc: dict, sets_desc: dict, existing_artifact: Optional[dict] = None) -> dict:
         """构建素材预览列表（含当前状态）用于前端实时显示"""
         preview = {"characters": [], "settings": []}
+        existing_artifact = existing_artifact or {}
+        existing_chars = {
+            item.get("id"): item for item in existing_artifact.get("characters", [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        existing_sets = {
+            item.get("id"): item for item in existing_artifact.get("settings", [])
+            if isinstance(item, dict) and item.get("id")
+        }
         for asset_id, info in chars_desc.items():
             existing = self._list_versions(sid, 'characters', asset_id)
+            current = existing_chars.get(asset_id, {})
             preview["characters"].append({
                 "id": asset_id,
                 "name": info.get("name", ""),
                 "description": info.get("description", ""),
                 "selected": existing[-1] if existing else "",
                 "versions": existing,
+                "reference_images": current.get("reference_images", []),
                 "status": "done" if existing else "pending",
             })
         for asset_id, info in sets_desc.items():
             existing = self._list_versions(sid, 'settings', asset_id)
             name = info.get("name", "") if isinstance(info, dict) else ""
             desc = info.get("description", "") if isinstance(info, dict) else str(info)
+            current = existing_sets.get(asset_id, {})
             preview["settings"].append({
                 "id": asset_id,
                 "name": name,
                 "description": desc,
                 "selected": existing[-1] if existing else "",
                 "versions": existing,
+                "reference_images": current.get("reference_images", []),
                 "status": "done" if existing else "pending",
             })
         return preview
 
     def _generate_one(self, img_client, asset_id: str, name: str, desc: str,
                       asset_type: str, style: str, species: str,
-                      t2i_model: str, vlm_model: str, sid: str, max_iterations: int = 3) -> tuple:
-        from models.public_errors import public_image_error
+                      t2i_model: str, it2i_model: str, vlm_model: str, sid: str,
+                      reference_images: Optional[List[str]] = None, max_iterations: int = 3) -> tuple:
+        from models.public_errors import is_retryable_media_error, public_image_error
 
         """生成单个素材图并返回 (asset_id, path_or_None, eval_result)
 
@@ -183,6 +198,8 @@ class CharacterDesignerAgent(AgentInterface):
         current_prompt = base_prompt
         eval_result = None
         last_error = ""
+        reference_images = [path for path in (reference_images or []) if path and os.path.exists(path)]
+        generation_model = it2i_model if reference_images else t2i_model
 
         for iteration in range(max_iterations):
             self._check_cancel()
@@ -192,8 +209,9 @@ class CharacterDesignerAgent(AgentInterface):
 
             try:
                 paths = img_client.generate_image(
-                    prompt=current_prompt, model=t2i_model,
+                    prompt=current_prompt, model=generation_model,
                     session_id=str(sid), save_dir=save_dir, video_ratio=video_ratio, resolution=resolution,
+                    image_paths=reference_images or None,
                 )
                 if not paths:
                     last_error = "图片模型没有返回可下载的图片。"
@@ -241,6 +259,12 @@ class CharacterDesignerAgent(AgentInterface):
             except Exception as e:
                 logger.error(f"Asset gen failed for {asset_type} {name}({asset_id}): {e}")
                 last_error = public_image_error(e, "Seedream / 图片模型")
+                # Retry one transient transport failure only. Quality-driven
+                # regeneration remains available after a successful response.
+                if iteration == 0 and is_retryable_media_error(e):
+                    time.sleep(2)
+                    continue
+                break
 
         # 达到最大迭代次数，尝试使用 VLM 选择最佳图片
         logger.warning(f"[{asset_type}] {name} reached max iterations ({max_iterations}), trying VLM selection")
@@ -417,12 +441,14 @@ class CharacterDesignerAgent(AgentInterface):
         from config import settings
         from models.image_client import ImageClient
 
+        input_data = self._merge_session_params(input_data)
         sid = input_data["session_id"]
         style = input_data.get("style", "anime")
         t2i_model = self._require_input(input_data, "image_t2i_model")
+        it2i_model = input_data.get("image_it2i_model") or t2i_model
         vlm_model = self._require_input(input_data, "vlm_model")
         # 根据 enable_concurrency 决定并发数
-        enable_concurrency = input_data.get("enable_concurrency", True)
+        enable_concurrency = input_data.get("enable_concurrency", False)
         logger.info(f"[CharacterAgent] enable_concurrency={enable_concurrency}")
         from models.config_model import get_max_concurrency
         max_concurrency = get_max_concurrency(t2i_model, enable_concurrency)
@@ -439,6 +465,17 @@ class CharacterDesignerAgent(AgentInterface):
             ark_base_url=settings.ARK_BASE_URL,
         )
         generation_errors: Dict[tuple[str, str], str] = {}
+        existing_artifact = self._session_artifact(input_data, "character_design") or {}
+        existing_by_type = {
+            "characters": {
+                item.get("id"): item for item in existing_artifact.get("characters", [])
+                if isinstance(item, dict) and item.get("id")
+            },
+            "settings": {
+                item.get("id"): item for item in existing_artifact.get("settings", [])
+                if isinstance(item, dict) and item.get("id")
+            },
+        }
 
         # ═══════════ 介入: 重新生成指定素材 ═══════════
         if intervention:
@@ -542,7 +579,9 @@ class CharacterDesignerAgent(AgentInterface):
                             })
                             fut = executor.submit(
                                 self._generate_one, img_client,
-                                aid, name, desc, atype, style, species, t2i_model, vlm_model, sid
+                                aid, name, desc, atype, style, species,
+                                t2i_model, it2i_model, vlm_model, sid,
+                                existing_by_type.get(atype, {}).get(aid, {}).get("reference_images", []),
                             )
                             futs[fut] = (atype, aid, name)
                         for fut in as_completed(futs):
@@ -577,7 +616,8 @@ class CharacterDesignerAgent(AgentInterface):
 
             self._report_progress("角色设计", "完成", 100)
             return self._build_payload(
-                sid, chars_desc, sets_desc, select_chars, select_sets, errors=generation_errors
+                sid, chars_desc, sets_desc, select_chars, select_sets,
+                errors=generation_errors, existing_artifact=existing_artifact,
             )
 
         # ═══════════ 正常流程: 全量首次生成 ═══════════
@@ -600,8 +640,19 @@ class CharacterDesignerAgent(AgentInterface):
             raise Exception("未能从剧本中读取到角色或场景描述数据")
 
         # 发送素材预览（含所有素材和当前状态）
-        preview = self._build_preview(sid, chars_desc, sets_desc)
+        preview = self._build_preview(sid, chars_desc, sets_desc, existing_artifact)
         self._report_progress("角色设计", "加载素材列表", 8, data={"assets_preview": preview})
+
+        if not input_data.get("generation_requested"):
+            return {
+                "payload": {
+                    "session_id": sid,
+                    **preview,
+                    "generation_started": False,
+                },
+                "requires_intervention": True,
+                "stage_completed": False,
+            }
 
         def run():
             all_tasks = []
@@ -639,7 +690,9 @@ class CharacterDesignerAgent(AgentInterface):
                     })
                     fut = executor.submit(
                         self._generate_one, img_client,
-                        aid, name, desc, atype, style, species, t2i_model, vlm_model, sid,
+                        aid, name, desc, atype, style, species,
+                        t2i_model, it2i_model, vlm_model, sid,
+                        existing_by_type.get(atype, {}).get(aid, {}).get("reference_images", []),
                     )
                     futs[fut] = (atype, aid, name)
 
@@ -674,15 +727,28 @@ class CharacterDesignerAgent(AgentInterface):
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, run)
 
-        return self._build_payload(sid, chars_desc, sets_desc, errors=generation_errors)
+        return self._build_payload(
+            sid, chars_desc, sets_desc, errors=generation_errors,
+            existing_artifact=existing_artifact,
+        )
 
     def _build_payload(self, sid: str, chars_desc: dict, sets_desc: dict,
                        selected_chars: dict = None, selected_sets: dict = None,
-                       errors: Dict[tuple[str, str], str] = None) -> dict:
+                       errors: Dict[tuple[str, str], str] = None,
+                       existing_artifact: Optional[dict] = None) -> dict:
         """构建返回给前端的 payload"""
         selected_chars = selected_chars or {}
         selected_sets = selected_sets or {}
         errors = errors or {}
+        existing_artifact = existing_artifact or {}
+        existing_chars = {
+            item.get("id"): item for item in existing_artifact.get("characters", [])
+            if isinstance(item, dict) and item.get("id")
+        }
+        existing_sets = {
+            item.get("id"): item for item in existing_artifact.get("settings", [])
+            if isinstance(item, dict) and item.get("id")
+        }
 
         characters = []
         for asset_id, info in chars_desc.items():
@@ -690,6 +756,7 @@ class CharacterDesignerAgent(AgentInterface):
             name = info.get("name", "") if isinstance(info, dict) else ""
             sel = selected_chars.get(asset_id, "")
             asset = self._build_asset_info(sid, 'characters', asset_id, name, desc, sel)
+            asset["reference_images"] = existing_chars.get(asset_id, {}).get("reference_images", [])
             if errors.get(('characters', asset_id)):
                 asset["status"] = "failed"
                 asset["error"] = errors[('characters', asset_id)]
@@ -701,6 +768,7 @@ class CharacterDesignerAgent(AgentInterface):
             name = info.get("name", "") if isinstance(info, dict) else ""
             sel = selected_sets.get(asset_id, "")
             asset = self._build_asset_info(sid, 'settings', asset_id, name, desc, sel)
+            asset["reference_images"] = existing_sets.get(asset_id, {}).get("reference_images", [])
             if errors.get(('settings', asset_id)):
                 asset["status"] = "failed"
                 asset["error"] = errors[('settings', asset_id)]
@@ -712,6 +780,7 @@ class CharacterDesignerAgent(AgentInterface):
                 "session_id": sid,
                 "characters": characters,
                 "settings": settings_list,
+                "generation_started": True,
             },
             "stage_completed": True,
         }

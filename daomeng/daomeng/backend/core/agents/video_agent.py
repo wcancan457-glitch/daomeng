@@ -353,15 +353,17 @@ class VideoDirectorAgent(AgentInterface):
             })
         return preview
 
-    def _build_payload(self, sid: str, segments: list, video_clips: Optional[list] = None) -> dict:
+    def _build_payload(self, sid: str, segments: list, video_clips: Optional[list] = None,
+                       errors: Optional[dict] = None) -> dict:
         clips = []
+        errors = errors or {}
         clip_map = {c.get("id"): c for c in (video_clips or []) if isinstance(c, dict) and c.get("id")}
         for idx, seg in enumerate(segments, 1):
             segment_id = seg["segment_id"]
             versions = self._list_versions(sid, segment_id)
             ep_n = seg.get('episode_number', 1)
             seg_n = seg.get('segment_number', idx)
-            clips.append({
+            clip = {
                 "id": segment_id,
                 "name": f"第{ep_n}集-片段{seg_n}",
                 "episode": ep_n,
@@ -371,11 +373,15 @@ class VideoDirectorAgent(AgentInterface):
                 "selected": versions[-1] if versions else "",
                 "versions": versions,
                 "status": "done" if versions else "failed",
-            })
+            }
+            if errors.get(segment_id):
+                clip["error"] = errors[segment_id]
+            clips.append(clip)
         return {
             "payload": {
                 "session_id": sid,
                 "clips": clips,
+                "generation_started": True,
             },
             "stage_completed": True,
         }
@@ -412,8 +418,17 @@ class VideoDirectorAgent(AgentInterface):
 
         session_meta = self._session_meta(input_data)
         video_generation_mode, video_model = self._select_video_model(input_data, session_meta)
-        enable_concurrency = input_data.get("enable_concurrency", True)
-        from models.config_model import get_max_concurrency
+        from models.config_model import get_max_concurrency, get_model_config
+
+        if "seedance-2-5" in video_model.lower() or "seedance2.5" in video_model.lower():
+            raise ValueError(
+                "当前项目尚未接入 Seedance 2.5，请选择已验证的 Seedance 2.0 或 Seedance 2.0 Fast。"
+            )
+        model_meta = get_model_config(video_model)
+        if model_meta.get("provider") == "unknown":
+            raise ValueError(f"视频模型 {video_model} 尚未在项目中注册，不能开始生成。")
+
+        enable_concurrency = input_data.get("enable_concurrency", False)
         concurrency = get_max_concurrency(video_model, enable_concurrency)
         
         video_ratio = input_data.get("video_ratio", "16:9")
@@ -432,6 +447,7 @@ class VideoDirectorAgent(AgentInterface):
             raise Exception("未找到分镜片段数据，请先完成阶段3")
         
         video_clips = artifacts.get('video_generation', {}).get('clips', [])
+        generation_errors: Dict[str, str] = {}
 
         # 2. 获取参考图路径映射 (从 Reference Generation)
         ref_art = artifacts.get('reference_generation', {})
@@ -442,6 +458,21 @@ class VideoDirectorAgent(AgentInterface):
         style_zh = input_data.get('style') or session_meta.get('style') or 'realistic'
         style_prompt = self._get_style_prompt(style_zh)
 
+        if not intervention and not input_data.get("generation_requested"):
+            preview = self._build_preview(sid, segments, scene_map, video_clips)
+            self._report_progress("视频生成", "视频任务已准备，请确认参考图后开始生成", 5, data={
+                "assets_preview": {"clips": preview}
+            })
+            return {
+                "payload": {
+                    "session_id": sid,
+                    "clips": preview,
+                    "generation_started": False,
+                },
+                "requires_intervention": True,
+                "stage_completed": False,
+            }
+
         # ═══ 介入：重新生成指定片段 ═══
         if intervention:
             regen_ids = intervention.get("regenerate_clips", [])
@@ -451,6 +482,7 @@ class VideoDirectorAgent(AgentInterface):
                 clip_map = {c['id']: c for c in video_clips}
                 
                 def regen_run():
+                    from models.public_errors import public_video_error
                     done = 0
                     with ThreadPoolExecutor(max_workers=concurrency) as executor:
                         futs = {}
@@ -495,6 +527,7 @@ class VideoDirectorAgent(AgentInterface):
                             except Exception as e:
                                 logger.error(f"Regen future error for {sid_done}: {e}")
                                 res_path = None
+                                generation_errors[sid_done] = public_video_error(e, "视频模型")
                             done += 1
                             pct = 5 + int(90 * done / max(1, len(regen_ids)))
                             if res_path:
@@ -521,7 +554,7 @@ class VideoDirectorAgent(AgentInterface):
                 # 同步到 session artifacts
                 self._update_session_video_data(sid, segments, style_prompt)
                 
-                return self._build_payload(sid, segments, video_clips)
+                return self._build_payload(sid, segments, video_clips, generation_errors)
 
         # ═══ 正常流程：全量生成 ═══
         self._report_progress("视频生成", "正在准备数据...", 2)
@@ -529,6 +562,7 @@ class VideoDirectorAgent(AgentInterface):
         self._report_progress("视频生成", "加载视频列表", 5, data={"assets_preview": {"clips": preview}})
 
         def run():
+            from models.public_errors import public_video_error
             tasks = []
             for seg_index, seg in enumerate(segments):
                 seg_id = seg["segment_id"]
@@ -576,6 +610,7 @@ class VideoDirectorAgent(AgentInterface):
                     except Exception as e:
                         logger.error(f"Video future error for {sid_done}: {e}")
                         res_path = None
+                        generation_errors[sid_done] = public_video_error(e, "视频模型")
                     done += 1
                     pct = 5 + int(90 * done / max(1, len(tasks)))
                     if res_path:
@@ -607,4 +642,4 @@ class VideoDirectorAgent(AgentInterface):
         self._update_session_video_data(sid, segments, style_prompt)
         
         self._report_progress("视频生成", "完成", 100)
-        return self._build_payload(sid, segments, video_clips)
+        return self._build_payload(sid, segments, video_clips, generation_errors)

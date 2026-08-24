@@ -20,6 +20,7 @@ interface SceneItem {
   versions: string[];     // 所有历史版本路径
   status?: 'pending' | 'done' | 'failed' | 'running';
   error?: string;
+  reference_images?: string[];
 }
 
 /* ─── 水平滚动图片画廊 ─── */
@@ -113,7 +114,9 @@ function ImageGallery({
                 </button>
               </div>
               <div className={`text-center text-[10px] py-0.5 ${
-                isSelected ? 'bg-emerald-500 text-white font-medium' : 'bg-gray-50 text-gray-400'
+                isSelected
+                  ? 'bg-emerald-500 text-white font-medium'
+                  : 'bg-gray-50 text-gray-400'
               }`}>
                 {assetVersionLabel(path, i)}
               </div>
@@ -158,6 +161,7 @@ function SceneRow({
   onCancelEdit,
   onUploadImage,
   isUploading,
+  uploadError,
 }: {
   scene: SceneItem;
   canEdit: boolean;
@@ -175,6 +179,7 @@ function SceneRow({
   onCancelEdit?: () => void;
   onUploadImage: (file: File) => void;
   isUploading?: boolean;
+  uploadError?: string;
 }) {
   const isRunning = scene.status === 'running' || isRegenerating;
   const isPending = scene.status === 'pending';
@@ -272,10 +277,10 @@ function SceneRow({
               : 'text-gray-600 bg-gray-100 hover:bg-gray-200 cursor-pointer'
           }`}>
             {isUploading ? <Loader className="w-3 h-3 animate-spin" /> : <Upload className="w-3 h-3" />}
-            {isUploading ? '上传中...' : '上传照片'}
+            {isUploading ? '上传中...' : '上传 AI 参考图'}
             <input
               type="file"
-              accept="image/*"
+              accept=".jpg,.jpeg,.png,.webp"
               className="hidden"
               disabled={isUploading}
               onChange={e => {
@@ -286,6 +291,24 @@ function SceneRow({
             />
           </label>
         </div>
+        {!!scene.reference_images?.length && (
+          <div className="mt-3" aria-label={`已上传 ${scene.reference_images.length} 张 AI 参考图`}>
+            <p className="mb-1.5 text-[11px] font-medium text-emerald-700">
+              AI 生成将额外参考以下 {scene.reference_images.length} 张图片
+            </p>
+            <div className="flex gap-2 overflow-x-auto pb-1">
+              {scene.reference_images.map((path, index) => (
+                <img
+                  key={path}
+                  src={assetUrl(path)}
+                  alt={`${scene.name} AI参考图 ${index + 1}`}
+                  className="h-12 w-12 shrink-0 rounded-lg border border-emerald-200 object-cover"
+                />
+              ))}
+            </div>
+          </div>
+        )}
+        {uploadError && <p className="mt-2 text-[11px] text-red-600" role="alert">{uploadError}</p>}
         {isFailed && scene.error && (
           <p className="mt-2 line-clamp-3 break-words text-[11px] leading-relaxed text-red-600" role="alert" title={scene.error}>
             {scene.error}
@@ -313,7 +336,7 @@ function SceneRow({
                     <button
                       onClick={onRegenerate}
                       disabled={isRegenerating}
-                      className="mt-1 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-red-600 bg-red-50 hover:bg-red-100 transition-colors disabled:text-gray-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      className="mt-1 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-red-600 bg-red-50 hover:bg-red-100 transition-colors disabled:text-red-300 disabled:cursor-not-allowed"
                     >
                       <RefreshCw className="w-2.5 h-2.5" />
                       点击重试
@@ -323,12 +346,12 @@ function SceneRow({
               ) : (
                 <>
                   <ImagePlus className="w-4 h-4" />
-                  <span>{isPending ? '等待生成...' : '暂无图片'}</span>
+                  <span>{isPending ? '等待开始 AI 生成' : '暂无图片'}</span>
                   {canGenerateMissing && (
                     <button
                       onClick={onRegenerate}
                       disabled={isRegenerating}
-                      className="mt-1 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition-colors disabled:text-gray-400 disabled:bg-gray-100 disabled:cursor-not-allowed"
+                      className="mt-1 inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[10px] font-medium text-emerald-600 bg-emerald-50 hover:bg-emerald-100 transition-colors disabled:text-emerald-300 disabled:cursor-not-allowed"
                     >
                       <RefreshCw className="w-2.5 h-2.5" />
                       生成
@@ -371,6 +394,7 @@ export default function ReferenceStage({ state, sessionId, onConfirm, onInterven
   const [editingIds, setEditingIds] = useState<Set<string>>(new Set());
   const [, setSavingIds] = useState<Set<string>>(new Set());
   const [uploadingIds, setUploadingIds] = useState<Set<string>>(new Set());
+  const [uploadErrors, setUploadErrors] = useState<Record<string, string>>({});
 
   // 提取剧集标题映射
   const episodeTitleMap = React.useMemo(() => {
@@ -519,14 +543,15 @@ export default function ReferenceStage({ state, sessionId, onConfirm, onInterven
 
   const handleUploadImage = async (sceneId: string, file: File) => {
     setUploadingIds(prev => new Set(prev).add(sceneId));
+    setUploadErrors(prev => ({ ...prev, [sceneId]: '' }));
     try {
       const result = await uploadArtifactImage(sessionId, 'reference_generation', 'scenes', sceneId, file);
       if (result.artifact?.scenes) {
         onUpdateArtifact?.({ scenes: result.artifact.scenes });
       }
-      setSelectedVersions(prev => ({ ...prev, [sceneId]: result.path }));
     } catch (error) {
       console.error('上传图片失败:', error);
+      setUploadErrors(prev => ({ ...prev, [sceneId]: error instanceof Error ? error.message : '上传参考图失败' }));
     } finally {
       setUploadingIds(prev => {
         const next = new Set(prev);
@@ -575,6 +600,12 @@ export default function ReferenceStage({ state, sessionId, onConfirm, onInterven
         <p className="text-sm text-gray-500 mb-6">
           基于角色/场景素材 + 分镜视觉描述，使用图生图生成场景参考图
         </p>
+
+        {state.artifact?.generation_started === false && (
+          <div className="mb-5 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-900">
+            场景生成尚未开始。你可以先给任意片段上传构图、人物姿态或画面风格参考图；准备完成后，点击底部“开始 AI 生图”。
+          </div>
+        )}
 
         {/* 运行中 */}
         {state.status === 'running' && (
@@ -635,6 +666,7 @@ export default function ReferenceStage({ state, sessionId, onConfirm, onInterven
                             allowMissingGenerate={state.status !== 'pending'}
                             onUploadImage={file => handleUploadImage(scene.id, file)}
                             isUploading={uploadingIds.has(scene.id)}
+                            uploadError={uploadErrors[scene.id]}
                           />
                         </div>
                       ))}
@@ -662,6 +694,7 @@ export default function ReferenceStage({ state, sessionId, onConfirm, onInterven
         hasPendingItems={hasPendingItems}
         hasNextStageStarted={hasNextStageStarted}
         isRunning={isRunning}
+        generationPrepared={state.artifact?.generation_started === false}
       />
     </div>
   );

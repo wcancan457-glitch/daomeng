@@ -25,6 +25,8 @@ interface StageActionsProps {
   /** 是否显示"确认并继续"按钮（后续阶段已执行过时隐藏） */
   showConfirm?: boolean;
   isRunning: boolean;
+  /** 已创建素材清单，但尚未主动启动本阶段的付费生成 */
+  generationPrepared?: boolean;
 }
 
 export default function StageActions({
@@ -38,7 +40,8 @@ export default function StageActions({
   hasPendingItems = true,
   hasNextStageStarted = false,
   showConfirm = true,
-  isRunning
+  isRunning,
+  generationPrepared = false,
 }: StageActionsProps) {
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
 
@@ -65,6 +68,11 @@ export default function StageActions({
   const showSaveSelections = onSaveSelections && (status === 'waiting' || status === 'completed' || status === 'stopped');
   // "确认并继续"在 showConfirm=true 且 waiting/running/completed 时显示（stopped 状态不显示确认）
   const showConfirmBtn = showConfirm && (status === 'waiting' || status === 'running' || status === 'completed');
+  const requiresCompleteAssets = ['character_design', 'reference_generation', 'video_generation'].includes(stageId);
+  const confirmDisabled = isRunning || (requiresCompleteAssets && hasPendingItems);
+  const generateLabel = generationPrepared
+    ? stageId === 'video_generation' ? '开始生成视频' : '开始 AI 生图'
+    : isContinueStage ? '继续生成' : '重新生成';
 
   const handleSaveClick = useCallback(async () => {
     if (!onSaveSelections || saveState !== 'idle') return;
@@ -92,7 +100,7 @@ export default function StageActions({
             title={isButtonDisabled ? (status === 'error' ? '重新尝试生成' : (isContinueStage && !hasPendingItems ? '所有项已生成完毕' : (isRegenStage && hasNextStageStarted ? '后续阶段已开始，无法重新生成' : ''))) : ''}
           >
             {isContinueStage ? <Play className="w-4 h-4" /> : <RefreshCw className="w-4 h-4" />}
-            {isContinueStage ? '继续生成' : '重新生成'}
+            {generateLabel}
           </button>
         )}
       </div>
@@ -141,7 +149,8 @@ export default function StageActions({
         {showConfirmBtn && (
           <button
             onClick={onConfirm}
-            disabled={isRunning}
+            disabled={confirmDisabled}
+            title={confirmDisabled && hasPendingItems ? '仍有素材未生成完成，请先生成或重试失败项' : ''}
             className="flex items-center gap-2 px-6 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:bg-blue-300"
           >
             <CheckCircle className="w-4 h-4" />

@@ -183,10 +183,13 @@ def check_provider(provider: str) -> Dict[str, Any]:
             "message": "API Key 连通正常，但供应商未返回可核对的模型列表。",
         }
 
+    success_message = "API Key 与接口地址连通正常。" if not selected else "API Key 连通正常，当前模型已在可用列表中。"
+    if provider == "ark":
+        success_message += " 此检测不产生费用，也不代表图片或视频生成任务一定成功。"
     return {
         **base,
         "ok": True,
         "level": "success",
         "verified_models": verified,
-        "message": "API Key 与接口地址连通正常。" if not selected else "API Key 连通正常，当前模型已在可用列表中。",
+        "message": success_message,
     }
