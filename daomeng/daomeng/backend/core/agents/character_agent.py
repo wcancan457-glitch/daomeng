@@ -12,7 +12,6 @@ import json
 import logging
 import os
 import re
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
@@ -75,6 +74,31 @@ class CharacterDesignerAgent(AgentInterface):
             f"【第{iteration + 1}轮VLM评估反馈】\n"
             f"上一轮生成未通过评估，请在下一轮生成时优先修正以下问题，同时保持原始角色/场景设定不变：\n"
             + "\n".join(f"- {line}" for line in feedback_lines)
+        )
+
+    @staticmethod
+    def _variation_directive(asset_type: str, candidate_number: int) -> str:
+        """为用户主动生成的新素材提供差异方向，但不破坏角色/场景连续性。"""
+        if candidate_number <= 1:
+            return ""
+
+        if asset_type == "characters":
+            strategies = (
+                "提升脸部结构、头发丝和服装面料的刻画精度，使用更均匀的中性棚拍光；仍须完整保留规定的多视图版式",
+                "优化五官自然度、身体比例和手脚完整性，使用更清晰的轮廓光；仍须完整保留规定的多视图版式",
+                "提升真实皮肤纹理、服装缝线与固定识别点的稳定性，减少塑料感；仍须完整保留规定的多视图版式",
+            )
+        else:
+            strategies = (
+                "改用略偏左的三分之四视角与非对称构图，增强前中后景层次",
+                "改用反方向视点和更宽的空间交代景别，突出入口、动线与关键陈设关系",
+                "调整为轻微高机位并改变视觉重心和留白方向，避免复刻上一版构图",
+            )
+        strategy = strategies[(candidate_number - 2) % len(strategies)]
+        return (
+            "\n\n【本次候选差异要求】\n"
+            f"这是第{candidate_number}个候选版本。必须保持既定身份、外貌、发型、服装、配饰、场景设定和美术风格一致；"
+            f"本次只按以下方向形成新的可选价值：{strategy}。不得生成与历史版本近似的复制品。"
         )
 
     # ─── 文件管理（基于唯一ID） ───
@@ -177,12 +201,12 @@ class CharacterDesignerAgent(AgentInterface):
     def _generate_one(self, img_client, asset_id: str, name: str, desc: str,
                       asset_type: str, style: str, species: str,
                       t2i_model: str, it2i_model: str, vlm_model: str, sid: str,
-                      reference_images: Optional[List[str]] = None, max_iterations: int = 3) -> tuple:
-        from models.public_errors import is_retryable_media_error, public_image_error
+                      reference_images: Optional[List[str]] = None, max_iterations: int = 1) -> tuple:
+        from models.public_errors import public_image_error
 
         """生成单个素材图并返回 (asset_id, path_or_None, eval_result)
 
-        评估-生成循环：如果 VLM 评估发现问题，最多重新生成 max_iterations 次
+        一次用户操作只生成一张。VLM 仅提供质检结果，不在后台自动触发额外付费生图。
         """
         self._check_cancel()
 
@@ -195,7 +219,8 @@ class CharacterDesignerAgent(AgentInterface):
 
         video_ratio = "16:9"
         resolution = "2K"
-        current_prompt = base_prompt
+        candidate_number = len(self._list_versions(sid, asset_type, asset_id)) + 1
+        current_prompt = base_prompt + self._variation_directive(asset_type, candidate_number)
         eval_result = None
         last_error = ""
         from accounts.media_store import resolve_media_file
@@ -222,7 +247,10 @@ class CharacterDesignerAgent(AgentInterface):
             }
         generation_model = it2i_model if reference_images else t2i_model
 
-        for iteration in range(max_iterations):
+        # max_iterations 仅保留为旧调用兼容参数；一次操作严格限制为一次图片调用。
+        _ = max_iterations
+        save_path = ""
+        for iteration in range(1):
             self._check_cancel()
 
             save_path = self._next_version_path(sid, asset_type, asset_id)
@@ -270,40 +298,21 @@ class CharacterDesignerAgent(AgentInterface):
                 if is_acceptable:
                     # 评估通过，返回结果
                     return asset_id, save_path, eval_result
-                else:
-                    # 评估不通过，记录问题并继续循环
-                    current_prompt = self._apply_eval_feedback_to_prompt(base_prompt, eval_result, iteration)
-                    logger.info(f"[{asset_type}] {name} 下一轮将使用VLM反馈优化提示词")
-                    # 报告进度
-                    self._report_progress("角色设计", f"重新生成中 ({iteration + 2}/{max_iterations}): {name}", 0)
-
             except Exception as e:
                 logger.error(f"Asset gen failed for {asset_type} {name}({asset_id}): {e}")
                 last_error = public_image_error(e, "Seedream / 图片模型")
-                # Retry one transient transport failure only. Quality-driven
-                # regeneration remains available after a successful response.
-                if iteration == 0 and is_retryable_media_error(e):
-                    time.sleep(2)
-                    continue
                 break
 
-        # 达到最大迭代次数，尝试使用 VLM 选择最佳图片
-        logger.warning(f"[{asset_type}] {name} reached max iterations ({max_iterations}), trying VLM selection")
-
-        # 收集所有生成过的版本
-        all_versions = self._list_versions(sid, asset_type, asset_id)
-        if len(all_versions) > 1:
-            # 有多个版本，调用 VLM 选择最好的
-            best_path, best_eval = self._select_best_with_vlm(
-                all_versions, name, desc, asset_type, species, vlm_model
-            )
-            if best_path:
-                logger.info(f"[{asset_type}] {name} VLM selected best version: {best_path}")
-                return asset_id, best_path, best_eval
-
-        # 没有多个版本或 VLM 选择失败，返回最后一次结果
+        # 自动质检不通过也保留本次付费结果，由用户决定采用或主动重新生成。
         result_path = save_path if os.path.exists(save_path) else None
         if result_path:
+            if not isinstance(eval_result, dict):
+                eval_result = {}
+            eval_result["quality_warning"] = (
+                "图片已生成并保留，但自动质检认为仍可改进。系统没有自动继续生图；"
+                "请先查看本图，需要新候选时再主动点击重新生成。"
+            )
+            logger.warning("[%s] %s 单张候选未通过VLM质检，已保留供用户判断", asset_type, name)
             return asset_id, result_path, eval_result
         failure = eval_result if isinstance(eval_result, dict) else {}
         failure["generation_error"] = last_error or "图片生成失败，模型没有返回可用文件。"

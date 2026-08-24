@@ -13,7 +13,6 @@ import json
 import logging
 import os
 import re
-import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
 
@@ -306,24 +305,45 @@ class ReferenceGeneratorAgent(AgentInterface):
             + "\n".join(f"- {line}" for line in feedback_lines)
         )
 
+    @staticmethod
+    def _variation_directive(candidate_number: int) -> str:
+        """让用户主动生成的新版本具有选择价值，同时锁定连续性要素。"""
+        if candidate_number <= 1:
+            return ""
+
+        strategies = (
+            "使用略偏左的三分之四侧面机位和中景，采用非对称构图，避免复刻上一版的正面或居中站位",
+            "切换到反打方向的越肩双人机位，调整人物前后景层次和视觉重心，避免复刻上一版的景别与站位",
+            "使用更宽的环境交代景别和轻微低机位，让空间关系更清楚，避免复刻上一版的镜头高度与构图",
+            "使用更紧的中近景和轻微高机位，截取同一动作中更有张力的瞬间，避免复刻上一版的动作定格",
+            "使用侧面双人构图并让主体落在画面三分线，改变留白方向，避免复刻上一版的人物排列",
+        )
+        strategy = strategies[(candidate_number - 2) % len(strategies)]
+        return (
+            "\n\n【本次候选差异要求】\n"
+            f"这是第{candidate_number}个候选版本。必须保持角色身份、脸部特征、发型、服装、场景、时间、光线逻辑和剧情动作连续一致；"
+            f"只调整摄影表达：{strategy}。新版本必须提供明显不同的可选价值，不能生成与历史版本近似的复制品。"
+        )
+
     def _generate_one(self, img_client, sid: str, segment: dict,
                       first_frame_prompt: str, refs: List[str],
                       style: str, it2i_model: str, t2i_model: str,
                       video_ratio: str = "16:9", resolution: str = "1080P", vlm_model: str = "qwen3.5-plus",
                       character_description: str = "", setting_description: str = "",
-                      max_versions: int = 3) -> tuple:
+                      max_versions: int = 1) -> tuple:
         """生成单个片段参考图，返回 (segment_id, path_or_None, eval_result)
 
-        最多生成 max_versions 个版本，如果所有版本都没有达到硬性合格标准，
-        使用 VLM 选择最好的一张作为最终参考图。
+        一次用户操作只生成一个可见候选。VLM 只提供质量提示，不会在后台继续
+        触发付费生图；用户主动重新生成时，才生成具有不同镜头方案的新版本。
         """
-        from models.public_errors import is_retryable_media_error, public_image_error
+        from models.public_errors import public_image_error
 
         segment_id = segment.get('segment_id', '')
 
         # 仅提取第一个镜头的描述作为当前 Plot
         plot = segment.get('shots', [])[0].get('content', '') if segment.get('shots') else ""
-        current_visual_prompt = first_frame_prompt
+        candidate_number = len(self._list_versions(sid, segment_id)) + 1
+        current_visual_prompt = first_frame_prompt + self._variation_directive(candidate_number)
 
         # 取消时直接跳过，不抛异常，以保留已生成的部分结果
         if self.cancellation_check and self.cancellation_check():
@@ -336,12 +356,14 @@ class ReferenceGeneratorAgent(AgentInterface):
             for i, r in enumerate(refs):
                 logger.info(f"[{segment_id}] 参考图[{i}]: {r}")
 
-        # 收集所有生成的版本
+        # 保留列表结构以兼容现有返回逻辑，但成本边界固定为一次操作一次生图。
         all_versions = []
         all_eval_results = []
         last_error = ""
 
-        for version in range(max_versions):
+        # max_versions 仅保留为旧调用兼容参数；不能用它在一次用户操作中隐藏连跑。
+        _ = max_versions
+        for version in range(1):
             self._check_cancel()
 
             style_prompt = self._get_style_prompt(style)
@@ -388,55 +410,39 @@ class ReferenceGeneratorAgent(AgentInterface):
                     logger.warning(f"[{segment_id}] 硬性失败项: {hard_failures}")
 
                 # 记录版本信息
-                eval_result["final_visual_prompt"] = current_visual_prompt
+                # 只持久化稳定的首帧提示词；候选差异指令是本次请求专用，
+                # 不能叠加到下一次重新生成，否则会出现互相冲突的机位要求。
+                eval_result["final_visual_prompt"] = first_frame_prompt
+                eval_result["generation_prompt"] = current_visual_prompt
                 all_versions.append(save_path)
                 all_eval_results.append(eval_result)
 
-                # 如果 VLM 判定达到硬性标准，立即返回
+                # 质检通过则直接返回；未通过也不隐藏图片或自动继续花费 Token。
                 if is_acceptable:
                     return segment_id, save_path, eval_result
-
-                # 报告进度
-                if version < max_versions - 1:
-                    current_visual_prompt = self._apply_eval_feedback_to_visual_prompt(current_visual_prompt, eval_result, version)
-                    logger.info(f"[{segment_id}] 下一轮将使用VLM反馈优化首帧提示词")
-                    self._report_progress("参考图", f"重新生成中 ({version + 2}/{max_versions}): {segment_id}", 0)
 
             except Exception as e:
                 logger.error(f"Segment {segment_id} image generation failed: {e}")
                 last_error = public_image_error(e, "Seedream / 图片模型")
-                if version == 0 and is_retryable_media_error(e):
-                    time.sleep(2)
-                    continue
                 break
 
-        # 所有版本都没有达到硬性标准，使用 VLM 选择最好的
+        # 图片已经生成但 VLM 未通过：把本次付费结果交给用户判断，不再隐藏连跑。
         if all_versions:
-            logger.warning(f"[{segment_id}] 所有版本都未达到硬性合格标准，使用VLM选择最佳...")
-            best_path, best_eval = self._select_best_with_vlm(
-                all_versions, segment, plot, current_visual_prompt,
-                character_description=character_description,
-                setting_description=setting_description,
-                vlm_model=vlm_model
+            latest_eval = all_eval_results[-1] if isinstance(all_eval_results[-1], dict) else {}
+            latest_eval["final_visual_prompt"] = first_frame_prompt
+            latest_eval["generation_prompt"] = current_visual_prompt
+            latest_eval["quality_warning"] = (
+                "图片已生成并保留，但自动质检认为仍可改进。系统没有自动继续生图；"
+                "请先查看本图，需要新候选时再主动点击重新生成。"
             )
-            if best_path and isinstance(best_eval, dict):
-                best_eval["final_visual_prompt"] = current_visual_prompt
-                hard_failures = best_eval.get("hard_failures") or []
-                is_acceptable = bool(best_eval.get("is_acceptable")) and not hard_failures
-                if is_acceptable:
-                    return segment_id, best_path, best_eval
-                logger.warning(
-                    "[%s] VLM选择的最佳图仍有硬性失败项，不作为最终参考图: %s",
-                    segment_id,
-                    hard_failures or best_eval.get("issues", []),
-                )
-                best_eval["generation_error"] = "图片已经生成，但没有版本通过 VLM 质量检查。"
-                return segment_id, None, best_eval
+            logger.warning("[%s] 单张候选未通过VLM质检，已保留供用户判断", segment_id)
+            return segment_id, all_versions[-1], latest_eval
 
         # 如果没有任何生成成功
         logger.warning(f"[{segment_id}] 没有成功生成任何图片")
         if all_eval_results and isinstance(all_eval_results[-1], dict):
-            all_eval_results[-1]["final_visual_prompt"] = current_visual_prompt
+            all_eval_results[-1]["final_visual_prompt"] = first_frame_prompt
+            all_eval_results[-1]["generation_prompt"] = current_visual_prompt
         failure = all_eval_results[-1] if all_eval_results and isinstance(all_eval_results[-1], dict) else {}
         failure["generation_error"] = last_error or "图片生成失败，模型没有返回可用文件。"
         return segment_id, None, failure

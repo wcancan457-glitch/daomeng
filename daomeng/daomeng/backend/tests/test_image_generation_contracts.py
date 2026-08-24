@@ -473,6 +473,109 @@ def test_character_generation_does_not_fall_back_to_text_when_uploaded_reference
     assert "未调用图片模型" in evaluation["generation_error"]
 
 
+def test_reference_generation_makes_one_visible_candidate_per_user_action(
+    tmp_path, monkeypatch
+) -> None:
+    agent = ReferenceGeneratorAgent()
+    old_versions = [tmp_path / "old-v1.jpg", tmp_path / "old-v2.jpg"]
+    for path in old_versions:
+        path.write_bytes(b"old")
+    destination = tmp_path / "seg_01_01_v3.jpg"
+    calls = []
+
+    class RecordingImageClient:
+        def generate_image(self, **kwargs):
+            calls.append(kwargs)
+            provider_file = tmp_path / "provider-result.jpg"
+            provider_file.write_bytes(b"generated")
+            return [str(provider_file)]
+
+    monkeypatch.setattr(agent, "_list_versions", lambda *_args: [str(p) for p in old_versions])
+    monkeypatch.setattr(agent, "_next_version_path", lambda *_args: str(destination))
+    monkeypatch.setattr(
+        agent,
+        "_evaluate_with_vlm",
+        lambda *_args, **_kwargs: {
+            "score": 3,
+            "hard_failures": ["构图缺少变化"],
+            "is_acceptable": False,
+        },
+    )
+
+    segment_id, result_path, evaluation = agent._generate_one(
+        RecordingImageClient(),
+        sid="single-candidate-contract",
+        segment={
+            "segment_id": "seg_01_01",
+            "shots": [{"content": "男女主角在街道重逢"}],
+        },
+        first_frame_prompt="男女主角在街道重逢，保持人物连续性",
+        refs=[],
+        style="realistic",
+        it2i_model="doubao-seedream-5-0-260128",
+        t2i_model="doubao-seedream-5-0-260128",
+        max_versions=9,
+    )
+
+    assert segment_id == "seg_01_01"
+    assert result_path == str(destination)
+    assert destination.read_bytes() == b"generated"
+    assert len(calls) == 1
+    assert "这是第3个候选版本" in calls[0]["prompt"]
+    assert "不能生成与历史版本近似的复制品" in calls[0]["prompt"]
+    assert "保持角色身份" in calls[0]["prompt"]
+    assert evaluation["final_visual_prompt"] == "男女主角在街道重逢，保持人物连续性"
+    assert "系统没有自动继续生图" in evaluation["quality_warning"]
+
+
+def test_character_generation_does_not_hide_quality_driven_paid_retries(
+    tmp_path, monkeypatch
+) -> None:
+    agent = CharacterDesignerAgent()
+    destination = tmp_path / "char_1.png"
+    calls = []
+
+    class RecordingImageClient:
+        def generate_image(self, **kwargs):
+            calls.append(kwargs)
+            provider_file = tmp_path / "provider-character.png"
+            provider_file.write_bytes(b"generated-character")
+            return [str(provider_file)]
+
+    monkeypatch.setattr(agent, "_list_versions", lambda *_args: [])
+    monkeypatch.setattr(agent, "_next_version_path", lambda *_args: str(destination))
+    monkeypatch.setattr(
+        agent,
+        "_evaluate_with_vlm",
+        lambda *_args, **_kwargs: {
+            "score": 4,
+            "hard_failures": ["手部不完整"],
+            "is_acceptable": False,
+        },
+    )
+
+    asset_id, result_path, evaluation = agent._generate_one(
+        RecordingImageClient(),
+        asset_id="char_1",
+        name="小雨",
+        desc="16岁女生，白色衬衫配藏蓝百褶裙",
+        asset_type="characters",
+        style="realistic",
+        species="人类",
+        t2i_model="doubao-seedream-5-0-260128",
+        it2i_model="doubao-seedream-5-0-260128",
+        vlm_model="Qwen/Qwen2.5-VL-72B-Instruct",
+        sid="single-character-contract",
+        max_iterations=8,
+    )
+
+    assert asset_id == "char_1"
+    assert result_path == str(destination)
+    assert destination.read_bytes() == b"generated-character"
+    assert len(calls) == 1
+    assert "系统没有自动继续生图" in evaluation["quality_warning"]
+
+
 def test_confirming_updated_character_only_invalidates_dependent_segments() -> None:
     engine = WorkflowEngine()
     state = WorkflowState(session_id="material-confirmation-contract")
