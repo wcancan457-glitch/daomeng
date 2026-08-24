@@ -346,13 +346,13 @@ def test_video_task_state_is_kept_in_final_payload(monkeypatch) -> None:
     assert progress_events[0]["persist"] is True
 
 
-def test_reference_generation_skips_stale_asset_paths(tmp_path) -> None:
+def test_reference_generation_reports_stale_asset_paths_before_paid_generation(tmp_path) -> None:
     valid_character = tmp_path / "character.png"
     valid_character.write_bytes(b"valid")
     missing_setting = tmp_path / "missing-setting.png"
     agent = ReferenceGeneratorAgent()
 
-    refs = agent._collect_refs(
+    refs, issues = agent._collect_refs_with_issues(
         {"segment_id": "seg_01_01", "characters": ["小雨"], "location": "天台"},
         {
             "characters": {"char_1": str(valid_character)},
@@ -363,3 +363,111 @@ def test_reference_generation_skips_stale_asset_paths(tmp_path) -> None:
     )
 
     assert refs == [str(valid_character.resolve())]
+    assert issues == ["场景“天台”的第二阶段场景图文件已失效"]
+
+
+def test_reference_generation_resolves_a_media_path_from_an_old_container(tmp_path, monkeypatch) -> None:
+    from config import settings
+
+    code_dir = tmp_path / "code"
+    restored = code_dir / "result" / "image" / "project-1" / "Assets" / "characters" / "char_1.png"
+    restored.parent.mkdir(parents=True)
+    restored.write_bytes(b"restored")
+    monkeypatch.setattr(settings, "CODE_DIR", str(code_dir))
+
+    resolved = ReferenceGeneratorAgent._resolve_existing_asset_path(
+        "/opt/render/project/src/backend/code/result/image/project-1/Assets/characters/char_1.png"
+    )
+
+    assert resolved == str(restored.resolve())
+
+
+def test_reference_generation_does_not_call_models_when_stage_two_asset_is_missing(
+    tmp_path, monkeypatch
+) -> None:
+    agent = ReferenceGeneratorAgent()
+    calls = []
+
+    def unexpected_call(*_args, **_kwargs):
+        calls.append("called")
+        raise AssertionError("缺少第二阶段素材时不应调用任何生成模型")
+
+    monkeypatch.setattr(agent, "_cancellable_query", unexpected_call)
+    monkeypatch.setattr(agent, "_generate_one", unexpected_call)
+    monkeypatch.setattr(agent, "_list_versions", lambda *_args: [])
+
+    result = asyncio.run(agent.process({
+        "session_id": "missing-stage-two-contract",
+        "style": "realistic",
+        "video_ratio": "16:9",
+        "resolution": "2K",
+        "llm_model": "Qwen/Qwen2.5-72B-Instruct",
+        "vlm_model": "Qwen/Qwen2.5-VL-72B-Instruct",
+        "image_t2i_model": "doubao-seedream-5-0-260128",
+        "image_it2i_model": "doubao-seedream-5-0-260128",
+        "generation_requested": True,
+        "enable_concurrency": False,
+        "_session_artifacts": {
+            "script_generation": {},
+            "character_design": {
+                "characters": [{
+                    "id": "char_1",
+                    "name": "小雨",
+                    "selected": str(tmp_path / "lost-character.png"),
+                }],
+                "settings": [],
+            },
+            "storyboard": {
+                "episodes": [{
+                    "episode_number": 1,
+                    "segments": [{
+                        "segment_id": "seg_01_01",
+                        "episode_number": 1,
+                        "segment_number": 1,
+                        "location": "",
+                        "characters": ["小雨"],
+                        "shots": [{"content": "小雨回头", "duration": 5}],
+                        "total_duration": 5,
+                    }],
+                }],
+            },
+            "reference_generation": {"scenes": []},
+        },
+    }))
+
+    assert calls == []
+    scene = result["payload"]["scenes"][0]
+    assert scene["status"] == "failed"
+    assert "未调用任何生成模型" in scene["error"]
+    assert "角色“小雨”的第二阶段角色图文件已失效" in scene["error"]
+
+
+def test_character_generation_does_not_fall_back_to_text_when_uploaded_reference_is_missing(
+    tmp_path,
+) -> None:
+    calls = []
+
+    class UnexpectedImageClient:
+        def generate_image(self, **_kwargs):
+            calls.append("called")
+            raise AssertionError("已上传参考图失效时不应降级成文生图")
+
+    asset_id, path, evaluation = CharacterDesignerAgent()._generate_one(
+        UnexpectedImageClient(),
+        asset_id="char_1",
+        name="小雨",
+        desc="16岁女生，白色衬衫配藏蓝百褶裙",
+        asset_type="characters",
+        style="realistic",
+        species="人类",
+        t2i_model="doubao-seedream-5-0-260128",
+        it2i_model="doubao-seedream-5-0-260128",
+        vlm_model="Qwen/Qwen2.5-VL-72B-Instruct",
+        sid="missing-upload-contract",
+        reference_images=[str(tmp_path / "lost-upload.png")],
+    )
+
+    assert asset_id == "char_1"
+    assert path is None
+    assert calls == []
+    assert "未调用图片模型" in evaluation["generation_error"]

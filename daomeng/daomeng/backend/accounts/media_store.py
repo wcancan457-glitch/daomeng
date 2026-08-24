@@ -245,3 +245,45 @@ def restore_media_path(relative_path: str) -> str | None:
         if os.path.exists(temp_path):
             os.remove(temp_path)
     return absolute_path
+
+
+def resolve_media_file(value: str) -> str | None:
+    """Resolve a persisted artifact path across local and container layouts.
+
+    Old workflow snapshots can contain absolute paths from an earlier Render
+    runtime. Prefer an existing path, then map anything after ``/code/`` into
+    the current runtime and finally rehydrate the file from database storage.
+    """
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    if raw.startswith(("http://", "https://", "data:")):
+        return raw
+
+    normalized = raw.replace("\\", "/")
+    candidates: list[str] = []
+    relative_path = ""
+    if os.path.isabs(raw):
+        candidates.append(os.path.abspath(raw))
+
+    lower = normalized.lower()
+    marker = lower.rfind("/code/")
+    if marker >= 0:
+        relative_path = normalized[marker + len("/code/"):].lstrip("/")
+    elif lower.startswith("code/"):
+        relative_path = normalized[len("code/"):].lstrip("/")
+    elif lower.startswith("result/"):
+        relative_path = normalized.lstrip("/")
+    elif not os.path.isabs(raw):
+        candidates.append(os.path.abspath(raw))
+
+    if relative_path:
+        candidates.append(_absolute_media_path(relative_path))
+
+    for candidate in dict.fromkeys(candidates):
+        if os.path.isfile(candidate):
+            return candidate
+
+    if relative_path:
+        return restore_media_path(relative_path)
+    return None

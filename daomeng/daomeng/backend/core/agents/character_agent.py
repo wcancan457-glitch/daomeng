@@ -198,7 +198,28 @@ class CharacterDesignerAgent(AgentInterface):
         current_prompt = base_prompt
         eval_result = None
         last_error = ""
-        reference_images = [path for path in (reference_images or []) if path and os.path.exists(path)]
+        from accounts.media_store import resolve_media_file
+
+        requested_reference_images = [path for path in (reference_images or []) if path]
+        reference_images = []
+        missing_reference_images = []
+        for path in requested_reference_images:
+            resolved = resolve_media_file(path)
+            if resolved:
+                reference_images.append(resolved)
+            else:
+                missing_reference_images.append(path)
+        if missing_reference_images:
+            message = (
+                "为避免人物外观或场景设定漂移，本素材未调用图片模型。"
+                "已上传的 AI 参考图文件失效，请重新上传后再生成。"
+            )
+            logger.error("[%s] %s missing=%s", asset_id, message, missing_reference_images)
+            return asset_id, None, {
+                "generation_error": message,
+                "hard_failures": ["已上传的 AI 参考图文件失效"],
+                "is_acceptable": False,
+            }
         generation_model = it2i_model if reference_images else t2i_model
 
         for iteration in range(max_iterations):

@@ -96,23 +96,36 @@ class ReferenceGeneratorAgent(AgentInterface):
         # 处理角色
         for char in character_design.get('characters', []):
             cid = char.get('id') or char.get('character_id')
-            selected = char.get('selected')
-            if cid and selected:
-                am['characters'][cid] = selected
+            if cid:
+                # 保留空选择，供阶段4在付费生图前区分“没有确认素材”和
+                # “素材记录存在但文件已经失效”。
+                am['characters'][cid] = char.get('selected') or ''
                 
         # 处理场景
         for setting in character_design.get('settings', []):
             sid = setting.get('id') or setting.get('setting_id')
-            selected = setting.get('selected')
-            if sid and selected:
-                am['settings'][sid] = selected
+            if sid:
+                am['settings'][sid] = setting.get('selected') or ''
                 
         return am
 
-    def _collect_refs(self, segment: dict, asset_map: dict,
-                      char_id_map: dict, setting_id_map: dict) -> List[str]:
-        """为一个片段(Segment)收集参考原图路径（角色 + 场景素材）"""
+    @staticmethod
+    def _resolve_existing_asset_path(value: str) -> str:
+        """把旧容器、本地和当前容器中的媒体路径统一解析到现存文件。
+
+        历史会话可能保存 `/opt/render/.../code/result/...`，而 Docker
+        部署后的实际目录是 `/app/code/result/...`。媒体字节即使已从
+        数据库恢复，直接检查旧绝对路径仍会误判为丢失。
+        """
+        from accounts.media_store import resolve_media_file
+
+        return resolve_media_file(value) or ''
+
+    def _collect_refs_with_issues(self, segment: dict, asset_map: dict,
+                                  char_id_map: dict, setting_id_map: dict) -> tuple[List[str], List[str]]:
+        """收集阶段2角色/场景图，并报告会导致一致性失真的缺失素材。"""
         refs = []
+        issues = []
         # 1. 角色匹配
         for cn in segment.get('characters', []):
             cid = char_id_map.get(cn)
@@ -123,13 +136,22 @@ class ReferenceGeneratorAgent(AgentInterface):
                         cid = _id
                         break
             
-            if cid and cid in asset_map['characters']:
-                path = os.path.abspath(asset_map['characters'][cid])
-                if os.path.isfile(path):
+            if not cid:
+                issues.append(f'角色“{cn}”未关联到第二阶段角色素材')
+            elif cid not in asset_map['characters'] or not asset_map['characters'].get(cid):
+                issues.append(f'角色“{cn}”没有已确认的第二阶段角色图')
+            else:
+                path = self._resolve_existing_asset_path(asset_map['characters'][cid])
+                if path:
                     refs.append(path)
                     logger.info(f"[{segment.get('segment_id', '')}] 添加角色参考图: {cn} -> {cid}")
                 else:
-                    logger.warning("[%s] 跳过已失效的角色参考图: %s", segment.get('segment_id', ''), path)
+                    issues.append(f'角色“{cn}”的第二阶段角色图文件已失效')
+                    logger.warning(
+                        "[%s] 角色参考图已失效: %s",
+                        segment.get('segment_id', ''),
+                        asset_map['characters'][cid],
+                    )
 
         # 2. 场景匹配
         loc = segment.get('location', '')
@@ -142,18 +164,38 @@ class ReferenceGeneratorAgent(AgentInterface):
                     logger.info(f"[{segment.get('segment_id', '')}] 场景模糊匹配成功: {loc} -> {name} ({set_id})")
                     break
 
-        if set_id and set_id in asset_map['settings']:
-            path = os.path.abspath(asset_map['settings'][set_id])
-            if os.path.isfile(path):
+        if loc and not set_id:
+            issues.append(f'场景“{loc}”未关联到第二阶段场景素材')
+        elif set_id and (set_id not in asset_map['settings'] or not asset_map['settings'].get(set_id)):
+            issues.append(f'场景“{loc}”没有已确认的第二阶段场景图')
+        elif set_id:
+            path = self._resolve_existing_asset_path(asset_map['settings'][set_id])
+            if path:
                 refs.append(path)
                 logger.info(f"[{segment.get('segment_id', '')}] 添加场景参考图: {loc} -> {set_id}")
             else:
-                logger.warning("[%s] 跳过已失效的场景参考图: %s", segment.get('segment_id', ''), path)
-        else:
+                issues.append(f'场景“{loc}”的第二阶段场景图文件已失效')
+                logger.warning(
+                    "[%s] 场景参考图已失效: %s",
+                    segment.get('segment_id', ''),
+                    asset_map['settings'][set_id],
+                )
+        elif loc:
             logger.warning(f"[{segment.get('segment_id', '')}] 未找到场景参考图: location={loc}, set_id={set_id}, available_settings={list(asset_map['settings'].keys())}")
         
-        logger.info(f"[{segment.get('segment_id', '')}] 共收集 {len(refs)} 张参考图")
-        return refs[:10]
+        logger.info(
+            "[%s] 共收集 %s 张阶段2参考图，缺失项 %s 个",
+            segment.get('segment_id', ''),
+            len(refs),
+            len(issues),
+        )
+        return refs[:10], issues
+
+    def _collect_refs(self, segment: dict, asset_map: dict,
+                      char_id_map: dict, setting_id_map: dict) -> List[str]:
+        """兼容旧调用：只返回现存参考图。生成流程应使用带问题清单的版本。"""
+        refs, _ = self._collect_refs_with_issues(segment, asset_map, char_id_map, setting_id_map)
+        return refs
 
     def _get_descriptions(self, segment: dict, char_id_map: dict, setting_id_map: dict,
                           character_json: dict) -> tuple:
@@ -628,8 +670,9 @@ class ReferenceGeneratorAgent(AgentInterface):
                 session_visual_prompts[sid_in_json] = vp
             if sid_in_json:
                 scene_reference_map[sid_in_json] = [
-                    path for path in scene.get("reference_images", [])
-                    if path and os.path.exists(path)
+                    resolved
+                    for path in scene.get("reference_images", [])
+                    if path and (resolved := self._resolve_existing_asset_path(path))
                 ]
 
         img_client = ImageClient(
@@ -718,6 +761,23 @@ class ReferenceGeneratorAgent(AgentInterface):
                         plot = first_shot.get('content', '')
                         char_desc, set_desc = self._get_descriptions(seg, char_id_map, setting_id_map, character_json)
 
+                        # 先校验第二阶段素材，再调用 LLM 或图片模型，避免缺图时继续消耗 Token。
+                        refs, missing_refs = self._collect_refs_with_issues(
+                            seg, asset_map, char_id_map, setting_id_map
+                        )
+                        if missing_refs:
+                            message = (
+                                "为避免角色、服装或场景不一致，本片段未调用任何生成模型。"
+                                "请返回第二阶段补齐并确认素材：" + "；".join(missing_refs)
+                            )
+                            logger.error("[%s] %s", segment_id, message)
+                            return segment_id, None, {
+                                "generation_error": message,
+                                "hard_failures": missing_refs,
+                                "is_acceptable": False,
+                                "final_visual_prompt": session_visual_prompts.get(segment_id) or plot,
+                            }, session_visual_prompts.get(segment_id) or plot
+
                         existing_vp = session_visual_prompts.get(segment_id)
                         if existing_vp:
                             ff_prompt = existing_vp
@@ -746,11 +806,7 @@ class ReferenceGeneratorAgent(AgentInterface):
 
                         logger.info(f"[{segment_id}] first-frame prompt: {ff_prompt}...")
 
-                        refs = self._collect_refs(seg, asset_map, char_id_map, setting_id_map)
                         refs = list(dict.fromkeys(refs + scene_reference_map.get(segment_id, [])))[:10]
-                        char_desc, set_desc = self._get_descriptions(
-                            seg, char_id_map, setting_id_map, character_json
-                        )
                         result_segment_id, result_path, eval_result = self._generate_one(
                             img_client, sid,
                             seg, ff_prompt, refs,
@@ -886,6 +942,23 @@ class ReferenceGeneratorAgent(AgentInterface):
                     plot = first_shot.get('content', '')
                     char_desc, set_desc = self._get_descriptions(seg, char_id_map, setting_id_map, character_json)
 
+                    # 先校验第二阶段素材，再调用 LLM 或图片模型，避免缺图时继续消耗 Token。
+                    refs, missing_refs = self._collect_refs_with_issues(
+                        seg, asset_map, char_id_map, setting_id_map
+                    )
+                    if missing_refs:
+                        message = (
+                            "为避免角色、服装或场景不一致，本片段未调用任何生成模型。"
+                            "请返回第二阶段补齐并确认素材：" + "；".join(missing_refs)
+                        )
+                        logger.error("[%s] %s", segment_id, message)
+                        return segment_id, None, {
+                            "generation_error": message,
+                            "hard_failures": missing_refs,
+                            "is_acceptable": False,
+                            "final_visual_prompt": session_visual_prompts.get(segment_id) or plot,
+                        }, session_visual_prompts.get(segment_id) or plot
+
                     existing_vp = session_visual_prompts.get(segment_id)
                     if existing_vp:
                         ff_prompt = existing_vp
@@ -914,9 +987,7 @@ class ReferenceGeneratorAgent(AgentInterface):
 
                     logger.info(f"[{segment_id}] Prompt ready, starting image generation...")
 
-                    refs = self._collect_refs(seg, asset_map, char_id_map, setting_id_map)
                     refs = list(dict.fromkeys(refs + scene_reference_map.get(segment_id, [])))[:10]
-                    char_desc, set_desc = self._get_descriptions(seg, char_id_map, setting_id_map, character_json)
                     result_segment_id, result_path, eval_result = self._generate_one(
                         img_client, sid,
                         seg, ff_prompt, refs,

@@ -312,10 +312,12 @@ class VideoDirectorAgent(AgentInterface):
 
     def _get_reference_image(self, sid: str, segment_id: str, scene_map: dict) -> str:
         """获取参考图路径：优先用选中的版本，次之用最新版本"""
+        from accounts.media_store import resolve_media_file
+
         # 1. 检查 session 中 artifacts.reference_generation.scenes 里的 selected
         if segment_id in scene_map and scene_map[segment_id].get("selected"):
-            path = scene_map[segment_id]["selected"]
-            if os.path.exists(path):
+            path = resolve_media_file(scene_map[segment_id]["selected"])
+            if path:
                 return path
 
         # 2. 回退：扫描磁盘 Scenes 目录
@@ -331,23 +333,27 @@ class VideoDirectorAgent(AgentInterface):
 
     def _get_next_reference_image(self, sid: str, segment_index: int, segments: list, scene_map: dict) -> Optional[str]:
         """首尾帧模式下，优先用下一个片段参考图作为尾帧。"""
+        from accounts.media_store import resolve_media_file
+
         if segment_index + 1 >= len(segments):
             return None
         next_segment_id = segments[segment_index + 1].get("segment_id")
         if not next_segment_id:
             return None
         path = self._get_reference_image(sid, next_segment_id, scene_map)
-        return path if path and os.path.exists(path) else None
+        return resolve_media_file(path)
 
     @staticmethod
     def _asset_selected_path(asset: dict) -> str:
+        from accounts.media_store import resolve_media_file
+
         selected = asset.get("selected") or ""
-        if selected and os.path.exists(selected):
-            return selected
+        if selected and (resolved := resolve_media_file(selected)):
+            return resolved
         # Legacy session compatibility: some old artifacts only have versions and no selected field.
         for path in reversed(asset.get("versions") or []):
-            if path and os.path.exists(path):
-                return path
+            if path and (resolved := resolve_media_file(path)):
+                return resolved
         return ""
 
     @staticmethod
