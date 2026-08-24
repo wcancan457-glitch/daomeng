@@ -240,7 +240,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
       episodes: creationMode === 'trial' ? 1 : episodes,
       creation_mode: creationMode,
       trial_duration_seconds: 15,
-    }, creationMode === 'trial' ? true : auto);
+    }, creationMode === 'trial' ? false : auto);
   };
 
   const handleExampleClick = (text: string) => {
@@ -324,7 +324,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey && (idea.trim() || uploadedFile)) {
                 e.preventDefault();
-                handleStart(true, 'trial');
+                handleStart(false, 'trial');
               }
             }}
           />
@@ -465,7 +465,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
                 )}
               </button>
               <button
-                onClick={() => handleStart(true, 'trial')}
+                onClick={() => handleStart(false, 'trial')}
                 disabled={!canStart}
                 className={clsx(
                   'flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold transition-colors',
@@ -473,7 +473,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
                     ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
                     : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                 )}
-                title="仅生成支撑15秒成片所需的角色、场景和镜头"
+                title="按六个阶段逐步确认，只生成支撑15秒成片所需的素材"
               >
                 <Clapperboard className="w-4 h-4" />
                 先做15秒试片
@@ -496,7 +496,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
           </div>
           <div className="mt-3 flex items-center justify-end gap-2 text-xs text-blue-700">
             <Clock className="h-3.5 w-3.5" />
-            <span>试片只准备15秒需要的素材；满意后可原项目扩展成1–2分钟完整一集</span>
+            <span>试片仍按六阶段逐步确认；只准备15秒所需素材，满意后可扩展成1–2分钟完整一集</span>
           </div>
           {(configLoading || configError) && (
             <div className={clsx('mt-3 text-xs', configError ? 'text-red-500' : 'text-gray-400')}>
