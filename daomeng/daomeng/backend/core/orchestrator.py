@@ -17,6 +17,7 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from accounts.media_store import persist_project_media, restore_project_media
 from accounts.ownership import all_project_payloads, load_project_payload, save_project_payload
 from core.agents import (
     CharacterDesignerAgent,
@@ -298,7 +299,12 @@ class WorkflowEngine:
         """Return a deep-copied session snapshot from the unified in-memory state."""
         with self._state_lock:
             state = self.get_state(session_id)
-            return state.to_dict() if state else None
+            if not state:
+                return None
+            media_status = self._restore_state_media(state)
+            snapshot = state.to_dict()
+            snapshot["media_status"] = media_status
+            return snapshot
 
     def get_artifact_snapshot(self, session_id: str, stage: str) -> Optional[Any]:
         """Return a deep-copied artifact snapshot from the unified in-memory state."""
@@ -306,8 +312,17 @@ class WorkflowEngine:
             state = self.get_state(session_id)
             if not state:
                 raise KeyError(f"Session not found: {session_id}")
+            self._restore_state_media(state)
             artifact = state.artifacts.get(stage)
             return copy.deepcopy(artifact) if artifact is not None else None
+
+    @staticmethod
+    def _restore_state_media(state: WorkflowState) -> Dict[str, Any]:
+        try:
+            return restore_project_media(state.session_id, state.artifacts)
+        except Exception as exc:
+            logger.exception("Failed to restore durable media for %s: %s", state.session_id, exc)
+            return {"restored": 0, "missing": [], "error": "媒体持久化恢复失败"}
 
     def update_session_meta(self, session_id: str, updates: Dict[str, Any], allowed_keys: tuple[str, ...]) -> Dict[str, Any]:
         """Update session-level generation settings through the engine-owned meta store."""
@@ -377,6 +392,7 @@ class WorkflowEngine:
         """Build stage input from current meta/artifacts without exposing mutable state to routers."""
         with self._state_lock:
             state = self.get_or_create_state(session_id)
+            self._restore_state_media(state)
             input_data = copy.deepcopy(body) if isinstance(body, dict) else {}
             input_data["session_id"] = session_id
 
@@ -397,6 +413,8 @@ class WorkflowEngine:
             state = self.get_state(session_id)
             if not state:
                 raise KeyError(f"Session not found: {session_id}")
+
+            self._restore_state_media(state)
 
             current_artifact = copy.deepcopy(state.artifacts.get(stage, {}))
             input_data = current_artifact if isinstance(current_artifact, dict) else {}
@@ -1584,6 +1602,12 @@ class WorkflowEngine:
                 shutil.move(tmp_path, path)
                 owner_id = str((data.get("meta") or {}).get("user_id") or "legacy-shared")
                 save_project_payload(session_id, owner_id, data)
+                try:
+                    media_result = persist_project_media(session_id, data.get("artifacts", {}))
+                    if media_result.get("persisted") or media_result.get("skipped"):
+                        logger.info("[Orchestrator] Media persistence %s: %s", session_id, media_result)
+                except Exception as media_exc:
+                    logger.exception("[Orchestrator] Failed to persist media for %s: %s", session_id, media_exc)
                 logger.info(f"[Orchestrator] Session {session_id} saved successfully.")
             except Exception as e:
                 if os.path.exists(tmp_path):

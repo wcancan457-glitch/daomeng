@@ -4,7 +4,17 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
+from sqlalchemy import (
+    JSON,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+)
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from accounts.database import Base
@@ -66,6 +76,35 @@ class ProjectOwnership(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
     )
+
+
+class ProjectMediaAsset(Base):
+    """Durable media bytes for small-scale testing deployments.
+
+    Render's runtime filesystem is ephemeral. Workflow artifacts keep their
+    normal relative paths, while this table stores the corresponding bytes so
+    a restarted or redeployed service can hydrate the files before use.
+    """
+
+    __tablename__ = "project_media_assets"
+
+    project_id: Mapped[str] = mapped_column(
+        String(80),
+        ForeignKey("project_ownership.project_id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    relative_path: Mapped[str] = mapped_column(String(700), primary_key=True)
+    content_type: Mapped[str] = mapped_column(String(120), nullable=False, default="application/octet-stream")
+    size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
+    sha256: Mapped[str] = mapped_column(String(64), nullable=False)
+    content: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
+    )
+
+
+Index("ix_project_media_assets_project", ProjectMediaAsset.project_id)
 
 
 class TaskOwnership(Base):

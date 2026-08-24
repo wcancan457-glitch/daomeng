@@ -22,9 +22,10 @@ from PIL import Image  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
 from accounts.database import SessionLocal  # noqa: E402
-from accounts.models import AdminAuditLog, SystemSetting, User  # noqa: E402
+from accounts.models import AdminAuditLog, ProjectMediaAsset, SystemSetting, User  # noqa: E402
 from api.app import app  # noqa: E402
 from api.dependencies import workflow_engine  # noqa: E402
+from config import settings  # noqa: E402
 from core.orchestrator import WorkflowEngine, WorkflowStage  # noqa: E402
 from pipelines.storage import (  # noqa: E402
     TaskQuotaError,
@@ -407,6 +408,26 @@ def test_projects_and_tasks_are_isolated_by_user() -> None:
         assert uploaded_character.get("selected", "") == ""
         assert len(uploaded_character["reference_images"]) == 1
         assert "ReferenceInputs" in uploaded_character["reference_images"][0]
+
+        # Render-style ephemeral filesystem recovery: session media is stored
+        # durably in the database and rehydrated before the artifact is used.
+        stored_reference = uploaded_character["reference_images"][0].replace("\\", "/")
+        relative_reference = stored_reference[len("code/"):] if stored_reference.startswith("code/") else stored_reference
+        absolute_reference = Path(settings.CODE_DIR) / relative_reference
+        assert absolute_reference.is_file()
+        with SessionLocal() as db:
+            durable_asset = db.get(ProjectMediaAsset, (project_id, relative_reference))
+            assert durable_asset is not None
+            assert durable_asset.size_bytes == absolute_reference.stat().st_size
+        absolute_reference.unlink()
+        assert not absolute_reference.exists()
+
+        restored_artifact = client.get(
+            f"/api/project/{project_id}/artifact/character_design",
+            headers=auth_header(first_token),
+        )
+        assert restored_artifact.status_code == 200
+        assert absolute_reference.is_file()
 
         project_state = workflow_engine.get_state(project_id)
         assert project_state is not None

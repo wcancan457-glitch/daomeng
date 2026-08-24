@@ -47,6 +47,12 @@ services:
         value: "26214400"
       - key: MAX_USER_TEMP_BYTES
         value: "262144000"
+      - key: MEDIA_PERSISTENCE_MODE
+        value: database
+      - key: DATABASE_MEDIA_MAX_FILE_BYTES
+        value: "104857600"
+      - key: DATABASE_MEDIA_MAX_PROJECT_BYTES
+        value: "524288000"
       - key: SILICONFLOW_API_KEY
         sync: false
       - key: DASHSCOPE_API_KEY

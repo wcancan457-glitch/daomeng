@@ -142,7 +142,7 @@ def test_video_generation_failure_is_actionable_and_persisted(tmp_path) -> None:
         )
 
     message = public_video_error(exc_info.value, "视频模型")
-    assert "缺少可用的首帧参考图" in message
+    assert "记录存在，但文件已失效" in message
 
     payload = agent._build_payload(
         "failure-contract",
