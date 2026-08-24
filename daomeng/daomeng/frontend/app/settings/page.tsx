@@ -1,8 +1,8 @@
 'use client';
 
+import { usePathname, useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { CheckCircle, Loader2, PlugZap, Save, Settings, TriangleAlert, XCircle } from 'lucide-react';
-import BrandHeader from '@/components/BrandHeader';
 import { authenticatedFetch } from '@/lib/auth';
 import { fetchModelGroupsByType, fetchVideoModelGroupsByAbility } from '@/lib/modelRegistry';
 import {
@@ -196,6 +196,9 @@ function isProviderOptions(options: Field['options']): options is ProviderGroup[
 }
 
 export default function SettingsPage() {
+  const pathname = usePathname();
+  const router = useRouter();
+  const embedded = pathname.startsWith('/admin');
   const [config, setConfig] = useState<ConfigTree>({});
   const [path, setPath] = useState('');
   const [loading, setLoading] = useState(true);
@@ -207,6 +210,10 @@ export default function SettingsPage() {
   const [modelSelects, setModelSelects] = useState<Record<ModelSelectKey, ProviderGroup[]>>(EMPTY_MODEL_SELECTS);
   const [testingProvider, setTestingProvider] = useState<TestableProvider | null>(null);
   const [providerTests, setProviderTests] = useState<Partial<Record<TestableProvider, ProviderTestResult>>>({});
+
+  useEffect(() => {
+    if (!embedded) router.replace('/admin?tab=models');
+  }, [embedded, router]);
 
   useEffect(() => {
     const load = async () => {
@@ -371,11 +378,19 @@ export default function SettingsPage() {
     setConfig(current => setValue(current, field.path, raw));
   };
 
+  if (!embedded) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-[#f4f7fb] text-sm text-slate-600" role="status">
+        <Loader2 className="mr-2 h-4 w-4 animate-spin text-blue-600" />
+        正在进入统一运营控制台…
+      </div>
+    );
+  }
+
   return (
-    <div className="min-h-screen bg-gray-50/50">
-      <BrandHeader />
-      <main className="w-full max-w-6xl mx-auto px-6 pt-10 pb-12">
-        <div className="mb-8 text-center">
+    <div className="w-full">
+      <main className="w-full">
+        <div className="mb-8 text-left">
           <div className="inline-flex items-center gap-2 mb-3">
             <Settings className="w-7 h-7 text-blue-500" />
             <h1 className="text-2xl font-bold text-gray-800">模型与 API 配置</h1>
@@ -404,7 +419,7 @@ export default function SettingsPage() {
                       type="button"
                       onClick={() => testProvider(group.provider!)}
                       disabled={testingProvider !== null}
-                      className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 text-xs font-medium text-gray-700 transition-colors hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-2 disabled:cursor-wait disabled:bg-gray-50 disabled:text-gray-400"
+                      className="inline-flex min-h-10 items-center gap-2 rounded-xl border border-gray-200 bg-white px-3 text-xs font-medium text-blue-700 transition-colors hover:border-blue-200 hover:bg-blue-50 focus-visible:outline-2 disabled:cursor-wait disabled:bg-blue-50 disabled:opacity-50"
                     >
                       {testingProvider === group.provider ? <Loader2 className="h-4 w-4 animate-spin" /> : <PlugZap className="h-4 w-4" />}
                       {testingProvider === group.provider ? '检测中' : '检测连通性'}

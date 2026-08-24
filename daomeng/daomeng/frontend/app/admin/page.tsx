@@ -1,6 +1,5 @@
 'use client';
 
-import Link from 'next/link';
 import {
   Activity,
   AlertTriangle,
@@ -17,13 +16,17 @@ import {
   RotateCcw,
   Search,
   Server,
-  Settings,
   ShieldCheck,
+  ShieldX,
+  LogOut,
   Video,
   XCircle,
 } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useState } from 'react';
+import ModelSettingsPanel from '@/app/settings/page';
 import BrandHeader from '@/components/BrandHeader';
+import { useAuth } from '@/components/AuthGate';
+import { logoutAccount } from '@/lib/auth';
 import {
   adminApi,
   type AdminModels,
@@ -506,8 +509,9 @@ function TasksPanel({ tasks, onRetried }: { tasks: AdminTask[]; onRetried: () =>
 
 function ModelsPanel({ data }: { data: AdminModels }) {
   return (
-    <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
-      <section className="rounded-2xl bg-white p-6 shadow-[0_16px_44px_-34px_rgba(15,23,42,0.65)]">
+    <div className="space-y-8">
+      <div className="grid gap-6 xl:grid-cols-[0.9fr_1.1fr]">
+        <section className="rounded-2xl bg-white p-6 shadow-[0_16px_44px_-34px_rgba(15,23,42,0.65)]">
         <div className="flex items-start justify-between gap-4">
           <div>
             <h2 className="text-lg font-semibold text-slate-950">服务商凭据</h2>
@@ -532,21 +536,14 @@ function ModelsPanel({ data }: { data: AdminModels }) {
             </div>
           ))}
         </div>
-      </section>
+        </section>
 
-      <section className="rounded-2xl bg-white p-6 shadow-[0_16px_44px_-34px_rgba(15,23,42,0.65)]">
+        <section className="rounded-2xl bg-white p-6 shadow-[0_16px_44px_-34px_rgba(15,23,42,0.65)]">
         <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
           <div>
             <h2 className="text-lg font-semibold text-slate-950">Agent 模型分配</h2>
             <p className="mt-1 text-sm text-slate-600">最近配置：{formatDate(data.config_updated_at)}</p>
           </div>
-          <Link
-            href="/settings"
-            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#0b1d43] px-4 text-sm font-medium text-white hover:bg-[#132c5f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
-          >
-            <Settings className="h-4 w-4" />
-            配置与连接测试
-          </Link>
         </div>
         <div className="mt-6 grid gap-x-8 gap-y-5 sm:grid-cols-2">
           {Object.entries(data.assignments).map(([key, model]) => (
@@ -556,6 +553,11 @@ function ModelsPanel({ data }: { data: AdminModels }) {
             </div>
           ))}
         </div>
+        </section>
+      </div>
+
+      <section className="border-t border-slate-200 pt-8">
+        <ModelSettingsPanel />
       </section>
     </div>
   );
@@ -622,6 +624,8 @@ function AuditPanel({ logs }: { logs: AuditLog[] }) {
 }
 
 export default function AdminPage() {
+  const { status: authStatus, user } = useAuth();
+  const canAccess = Boolean(authStatus) && (authStatus?.mode !== 'users' || user?.role === 'admin');
   const [tab, setTab] = useState<Tab>('overview');
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
@@ -660,11 +664,67 @@ export default function AdminPage() {
     }
   }, []);
 
-  useEffect(() => { void load(true); }, [load]);
+  useEffect(() => {
+    const requestedTab = new URLSearchParams(window.location.search).get('tab') as Tab | null;
+    if (requestedTab && TABS.some(item => item.id === requestedTab)) setTab(requestedTab);
+  }, []);
+
+  useEffect(() => {
+    if (canAccess) void load(true);
+    else if (authStatus) setLoading(false);
+  }, [authStatus, canAccess, load]);
 
   const reloadAfterAction = useCallback(async () => {
     await load(false);
   }, [load]);
+
+  const selectTab = (nextTab: Tab) => {
+    setTab(nextTab);
+    const nextUrl = nextTab === 'overview' ? '/admin' : `/admin?tab=${nextTab}`;
+    window.history.replaceState(null, '', nextUrl);
+  };
+
+  if (authStatus && !canAccess) {
+    return (
+      <div className="min-h-screen bg-[#f4f7fb]">
+        <BrandHeader />
+        <main className="mx-auto flex min-h-[calc(100vh-3.5rem)] w-full max-w-3xl items-center px-4 py-10 sm:px-6">
+          <section className="w-full rounded-2xl bg-white p-7 shadow-[0_20px_54px_-36px_rgba(15,23,42,0.7)] sm:p-10">
+            <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-amber-50 text-amber-700">
+              <ShieldX className="h-6 w-6" />
+            </div>
+            <h1 className="mt-6 text-2xl font-semibold tracking-[-0.025em] text-slate-950">当前账号不是管理员</h1>
+            <p className="mt-3 max-w-[64ch] text-sm leading-7 text-slate-600">
+              你现在登录的是普通用户账号 <span className="font-medium text-slate-900">{user?.email || '未知账号'}</span>，因此不能查看运营数据和模型 API。此前系统直接返回首页，容易让人误以为链接失效，现在会明确显示权限原因。
+            </p>
+            <div className="mt-7 rounded-xl bg-blue-50 px-4 py-3 text-sm leading-6 text-blue-900">
+              请退出当前账号，再使用管理员邮箱 <span className="font-semibold">admin@daomeng.app</span> 和原共享访问密码登录。
+            </div>
+            <div className="mt-7 flex flex-col gap-3 sm:flex-row">
+              <button
+                type="button"
+                onClick={async () => {
+                  await logoutAccount();
+                  window.location.replace('/');
+                }}
+                className="inline-flex h-11 items-center justify-center gap-2 rounded-xl bg-[#0b1d43] px-5 text-sm font-medium text-white hover:bg-[#132c5f] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-blue-600"
+              >
+                <LogOut className="h-4 w-4" />
+                退出并切换管理员账号
+              </button>
+              <button
+                type="button"
+                onClick={() => window.location.replace('/')}
+                className="h-11 rounded-xl px-5 text-sm font-medium text-slate-700 hover:bg-slate-100 focus-visible:outline-2 focus-visible:outline-slate-500"
+              >
+                返回客户端
+              </button>
+            </div>
+          </section>
+        </main>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-[#f4f7fb]">
@@ -694,7 +754,7 @@ export default function AdminPage() {
               <button
                 key={item.id}
                 type="button"
-                onClick={() => setTab(item.id)}
+                onClick={() => selectTab(item.id)}
                 className={`relative h-11 text-sm font-medium transition-colors focus-visible:outline-2 focus-visible:outline-blue-600 ${tab === item.id ? 'text-blue-700' : 'text-slate-600 hover:text-slate-950'}`}
                 aria-current={tab === item.id ? 'page' : undefined}
               >

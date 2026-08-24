@@ -18,7 +18,6 @@ const NAV_ITEMS = [
   { href: '/pipelines/digital-human', label: '数字人口播', icon: UserRound },
 ];
 
-const SETTINGS_ITEM = { href: '/settings', label: '模型配置', icon: Settings };
 const ADMIN_ITEM = { href: '/admin', label: '运营控制台', icon: ShieldCheck };
 
 const PIPELINE_ROUTES: Record<string, { href: string; label: string }> = {
@@ -323,10 +322,6 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
     setShowWelcome(window.localStorage.getItem('daomeng.show-welcome') === 'true');
   }, []);
 
-  useEffect(() => {
-    if (!canManageSettings && (pathname.startsWith('/settings') || pathname.startsWith('/admin'))) router.replace('/');
-  }, [canManageSettings, pathname, router]);
-
   const setSidebarOpen = (nextOpen: boolean) => {
     setOpen(nextOpen);
     if (window.innerWidth >= 768) saveSidebarOpen(nextOpen);
@@ -427,7 +422,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </button>
           </div>
           <nav className="min-h-0 flex-1 overflow-y-auto p-3 space-y-1">
-            {(canManageSettings ? [...NAV_ITEMS, ADMIN_ITEM, SETTINGS_ITEM] : NAV_ITEMS).map(item => {
+            {(canManageSettings ? [...NAV_ITEMS, ADMIN_ITEM] : NAV_ITEMS).map(item => {
               const Icon = item.icon;
               const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
               return (
@@ -458,7 +453,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   type="button"
                   onClick={() => {
                     setSettingsMenuOpen(false);
-                    router.push(SETTINGS_ITEM.href);
+                    router.push('/admin?tab=models');
                   }}
                   className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-blue-600"
                 >
