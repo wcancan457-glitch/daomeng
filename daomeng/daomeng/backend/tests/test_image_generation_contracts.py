@@ -1,9 +1,12 @@
 import asyncio
+import shutil
+import subprocess
 from pathlib import Path
 
 import pytest
 
 from core.agents.character_agent import CharacterDesignerAgent
+from core.agents.editor_agent import VideoEditorAgent
 from core.agents.reference_agent import ReferenceGeneratorAgent
 from core.agents.script_agent import ScriptWriterAgent
 from core.agents.video_agent import VideoDirectorAgent
@@ -17,6 +20,94 @@ def test_seedream_full_does_not_receive_unsupported_sequential_parameter() -> No
     assert supports_sequential_image_generation("doubao-seedream-5-0-260128") is False
     assert supports_sequential_image_generation("doubao-seedream-5-0-lite-260128") is True
     assert supports_sequential_image_generation("doubao-seedream-4-5-251128") is True
+
+
+def test_backend_image_installs_ffmpeg_for_post_production() -> None:
+    dockerfile = (Path(__file__).parents[1] / "Dockerfile").read_text(encoding="utf-8")
+    assert "apt-get install -y --no-install-recommends ffmpeg" in dockerfile
+
+
+def test_post_production_missing_ffmpeg_preserves_paid_video_guidance(monkeypatch) -> None:
+    monkeypatch.setattr("core.agents.editor_agent.shutil.which", lambda _name: None)
+
+    with pytest.raises(RuntimeError) as exc_info:
+        VideoEditorAgent._require_ffmpeg()
+
+    message = str(exc_info.value)
+    assert "现有视频片段不会丢失" in message
+    assert "无需重新生成" in message
+    assert "只重试后期制作" in message
+
+
+def test_post_production_really_concatenates_two_clips_with_ffmpeg(
+    tmp_path, monkeypatch
+) -> None:
+    ffmpeg = shutil.which("ffmpeg")
+    if not ffmpeg:
+        pytest.skip("FFmpeg is not installed in this test environment")
+
+    clips = []
+    for index, color in enumerate(("red", "blue"), 1):
+        clip = tmp_path / f"clip-{index}.mp4"
+        subprocess.run(
+            [
+                ffmpeg,
+                "-y",
+                "-f",
+                "lavfi",
+                "-i",
+                f"color=c={color}:s=320x180:r=24:d=0.5",
+                "-f",
+                "lavfi",
+                "-i",
+                "anullsrc=r=44100:cl=stereo",
+                "-t",
+                "0.5",
+                "-c:v",
+                "libx264",
+                "-pix_fmt",
+                "yuv420p",
+                "-c:a",
+                "aac",
+                "-shortest",
+                str(clip),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        clips.append(clip)
+
+    from config import settings
+
+    result_root = tmp_path / "result"
+    monkeypatch.setattr(settings, "RESULT_DIR", str(result_root))
+    result = asyncio.run(VideoEditorAgent().process({
+        "session_id": "real-ffmpeg-contract",
+        "_session_artifacts": {
+            "storyboard": {
+                "episodes": [{"episode_number": 1, "act_title": "测试短片"}],
+            },
+            "video_generation": {
+                "clips": [
+                    {
+                        "id": f"seg_01_0{index}",
+                        "name": f"第1集-片段{index}",
+                        "episode": 1,
+                        "selected": str(clip),
+                        "versions": [str(clip)],
+                        "status": "done",
+                    }
+                    for index, clip in enumerate(clips, 1)
+                ],
+            },
+        },
+    }))
+
+    final_video = Path(result["payload"]["final_video"])
+    assert final_video.is_file()
+    assert final_video.stat().st_size > 0
+    assert result["payload"]["final_videos"][0]["name"] == "测试短片"
 
 
 def test_character_prompt_contains_production_ready_visual_constraints() -> None:

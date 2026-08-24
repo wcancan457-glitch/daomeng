@@ -8,6 +8,7 @@ import asyncio
 import logging
 import os
 import re
+import shutil
 import subprocess
 from typing import Any, Dict, Optional
 
@@ -22,6 +23,17 @@ class VideoEditorAgent(AgentInterface):
     def __init__(self):
         super().__init__(name="VideoEditor")
 
+    @staticmethod
+    def _require_ffmpeg() -> str:
+        """Resolve FFmpeg before editing so deployment errors stay actionable."""
+        executable = shutil.which("ffmpeg")
+        if not executable:
+            raise RuntimeError(
+                "后期服务缺少 FFmpeg，现有视频片段不会丢失，也无需重新生成。"
+                "请等待后端环境修复后只重试后期制作。"
+            )
+        return executable
+
     async def process(self, input_data: Any, intervention: Optional[Dict] = None) -> Dict:
         input_data = self._merge_session_params(input_data)
         sid = input_data["session_id"]
@@ -30,6 +42,7 @@ class VideoEditorAgent(AgentInterface):
         artifacts = self._session_artifacts(input_data)
         video_art = artifacts.get("video_generation", {})
         clips_list = video_art.get("clips", [])
+        from accounts.media_store import resolve_media_file
         
         # 获取剧集标题映射 (从 Storyboard)
         storyboard_art = artifacts.get("storyboard", {})
@@ -46,7 +59,7 @@ class VideoEditorAgent(AgentInterface):
             missing_clips = [
                 str(clip.get("name") or clip.get("id") or "未知片段")
                 for clip in clips_list
-                if not clip.get("selected") or not os.path.exists(str(clip.get("selected") or ""))
+                if not clip.get("selected") or not resolve_media_file(str(clip.get("selected") or ""))
             ]
             if missing_clips:
                 raise Exception(
@@ -54,6 +67,7 @@ class VideoEditorAgent(AgentInterface):
                 )
         
         self._report_progress("后期制作", "准备视频片段...", 5)
+        ffmpeg_exe = self._require_ffmpeg()
 
         def run():
             from config import settings
@@ -68,8 +82,8 @@ class VideoEditorAgent(AgentInterface):
             
             if clips_list:
                 for clip in clips_list:
-                    path = clip.get("selected")
-                    if not path or not os.path.exists(path):
+                    path = resolve_media_file(str(clip.get("selected") or ""))
+                    if not path:
                         raise Exception(f"视频片段文件不存在：{clip.get('id')}")
                     
                     # 优先使用片段数据中的 episode 字段
@@ -94,8 +108,8 @@ class VideoEditorAgent(AgentInterface):
                     return tuple(int(n) for n in re.findall(r'\d+', k)) or (999,)
                 selected_clips = input_data.get("selected_clips", {})
                 for shot_id in sorted(selected_clips.keys(), key=sort_key):
-                    path = selected_clips[shot_id]
-                    if os.path.exists(path):
+                    path = resolve_media_file(str(selected_clips[shot_id] or ""))
+                    if path:
                         # 旧逻辑默认全部归为第1集
                         episodes_map.setdefault(1, []).append(path)
                     else:
@@ -107,8 +121,6 @@ class VideoEditorAgent(AgentInterface):
             final_videos = []
             sorted_episodes = sorted(episodes_map.keys())
             total_eps = len(sorted_episodes)
-
-            ffmpeg_exe = 'ffmpeg'
 
             for i, ep_idx in enumerate(sorted_episodes):
                 self._report_progress("后期制作", f"正在拼接第 {ep_idx} 集 ({i+1}/{total_eps})...", int(20 + (i/total_eps)*70))
@@ -136,7 +148,11 @@ class VideoEditorAgent(AgentInterface):
                 except subprocess.CalledProcessError as e:
                     logger.error(f"FFmpeg failed with exit code {e.returncode}")
                     logger.error(f"FFmpeg stderr: {e.stderr}")
-                    raise Exception(f"视频拼接失败: {e.stderr}")
+                    detail = (e.stderr or "未知编码错误").strip()[-1200:]
+                    raise RuntimeError(
+                        "现有视频片段已保留，但后期拼接失败。无需重新生成视频；"
+                        f"请修正后只重试后期制作。FFmpeg：{detail}"
+                    ) from e
                 
                 ep_title = ep_title_map.get(ep_idx, f"第 {ep_idx} 集")
                 final_videos.append({
