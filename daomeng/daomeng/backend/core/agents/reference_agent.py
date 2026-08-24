@@ -124,8 +124,12 @@ class ReferenceGeneratorAgent(AgentInterface):
                         break
             
             if cid and cid in asset_map['characters']:
-                refs.append(os.path.abspath(asset_map['characters'][cid]))
-                logger.info(f"[{segment.get('segment_id', '')}] 添加角色参考图: {cn} -> {cid}")
+                path = os.path.abspath(asset_map['characters'][cid])
+                if os.path.isfile(path):
+                    refs.append(path)
+                    logger.info(f"[{segment.get('segment_id', '')}] 添加角色参考图: {cn} -> {cid}")
+                else:
+                    logger.warning("[%s] 跳过已失效的角色参考图: %s", segment.get('segment_id', ''), path)
 
         # 2. 场景匹配
         loc = segment.get('location', '')
@@ -139,8 +143,12 @@ class ReferenceGeneratorAgent(AgentInterface):
                     break
 
         if set_id and set_id in asset_map['settings']:
-            refs.append(os.path.abspath(asset_map['settings'][set_id]))
-            logger.info(f"[{segment.get('segment_id', '')}] 添加场景参考图: {loc} -> {set_id}")
+            path = os.path.abspath(asset_map['settings'][set_id])
+            if os.path.isfile(path):
+                refs.append(path)
+                logger.info(f"[{segment.get('segment_id', '')}] 添加场景参考图: {loc} -> {set_id}")
+            else:
+                logger.warning("[%s] 跳过已失效的场景参考图: %s", segment.get('segment_id', ''), path)
         else:
             logger.warning(f"[{segment.get('segment_id', '')}] 未找到场景参考图: location={loc}, set_id={set_id}, available_settings={list(asset_map['settings'].keys())}")
         

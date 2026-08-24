@@ -185,3 +185,22 @@ def test_seedance_submit_payload_omits_null_optional_parameters() -> None:
     )
     assert explicit["watermark"] is False
     assert explicit["generate_audio"] is False
+
+
+def test_reference_generation_skips_stale_asset_paths(tmp_path) -> None:
+    valid_character = tmp_path / "character.png"
+    valid_character.write_bytes(b"valid")
+    missing_setting = tmp_path / "missing-setting.png"
+    agent = ReferenceGeneratorAgent()
+
+    refs = agent._collect_refs(
+        {"segment_id": "seg_01_01", "characters": ["小雨"], "location": "天台"},
+        {
+            "characters": {"char_1": str(valid_character)},
+            "settings": {"set_1": str(missing_setting)},
+        },
+        {"小雨": "char_1"},
+        {"天台": "set_1"},
+    )
+
+    assert refs == [str(valid_character.resolve())]
