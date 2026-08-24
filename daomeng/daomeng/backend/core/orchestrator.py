@@ -1294,6 +1294,22 @@ class WorkflowEngine:
             if clip is None:
                 raise ValueError("当前项目中不存在该视频片段")
 
+            already_used_by = next(
+                (
+                    item
+                    for item in clips
+                    if isinstance(item, dict)
+                    and item.get("id") != clip_id
+                    and item.get("provider_task_id") == task_id
+                ),
+                None,
+            )
+            if already_used_by is not None:
+                used_name = already_used_by.get("name") or already_used_by.get("id") or "其他片段"
+                raise ValueError(
+                    f"该方舟任务已经恢复到“{used_name}”，一个任务只能对应一个视频片段。"
+                )
+
             expected_duration = int(clip.get("duration") or 0) or None
             mode = state.meta.get("video_generation_mode") or "first_frame"
             model_key = {
@@ -1366,6 +1382,93 @@ class WorkflowEngine:
                 "clip_id": clip_id,
                 "provider_task_id": task_id,
                 "artifact": copy.deepcopy(video_artifact),
+                "status_map": copy.deepcopy(state.status),
+            }
+
+    def upload_video_first_frame(
+        self,
+        session_id: str,
+        clip_id: str,
+        file_obj: Any,
+        filename: str = "",
+    ) -> Dict[str, Any]:
+        """Replace one clip's broken first frame without making the user repeat prior stages."""
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", str(clip_id or "")):
+            raise ValueError("视频片段 ID 格式无效")
+
+        with self._state_lock:
+            state = self.get_state(session_id)
+            if not state:
+                raise KeyError(f"Session not found: {session_id}")
+            video_artifact = state.artifacts.get("video_generation", {})
+            clips = video_artifact.get("clips", []) if isinstance(video_artifact, dict) else []
+            if not any(
+                isinstance(item, dict) and item.get("id") == clip_id
+                for item in clips
+            ):
+                raise ValueError("当前项目中不存在该视频片段")
+
+        upload_result = self.upload_artifact_image(
+            session_id=session_id,
+            stage="reference_generation",
+            item_type="scenes",
+            item_id=clip_id,
+            file_obj=file_obj,
+            filename=filename,
+        )
+        first_frame_path = str(upload_result.get("path") or "")
+        if not first_frame_path:
+            raise RuntimeError("首帧图片已上传，但没有获得可用文件路径")
+
+        with self._state_lock:
+            state = self.get_state(session_id)
+            if not state:
+                raise KeyError(f"Session not found: {session_id}")
+
+            reference_artifact = state.artifacts.setdefault("reference_generation", {})
+            scenes = reference_artifact.setdefault("scenes", [])
+            scene = next(
+                (item for item in scenes if isinstance(item, dict) and item.get("id") == clip_id),
+                None,
+            )
+            if scene is None:
+                raise RuntimeError("首帧图片已上传，但无法关联到对应片段")
+            versions = scene.get("versions") if isinstance(scene.get("versions"), list) else []
+            if first_frame_path not in versions:
+                versions.append(first_frame_path)
+            scene.update({
+                "selected": first_frame_path,
+                "versions": versions,
+                "status": "done",
+                "source": "video_stage_upload",
+            })
+            scene.pop("error", None)
+
+            video_artifact = state.artifacts.setdefault("video_generation", {})
+            clips = video_artifact.setdefault("clips", [])
+            clip = next(
+                (item for item in clips if isinstance(item, dict) and item.get("id") == clip_id),
+                None,
+            )
+            if clip is None:
+                raise ValueError("当前项目中不存在该视频片段")
+            if not clip.get("selected"):
+                clip["status"] = "pending"
+            clip.pop("error", None)
+            for key in tuple(clip):
+                if key == "provider" or key.startswith("provider_") or key == "elapsed_seconds":
+                    clip.pop(key, None)
+
+            state.error = None
+            state.updated_at = datetime.now()
+            self._recalculate_all_statuses(state)
+            self.save_session_to_disk(session_id)
+            return {
+                "status": "ok",
+                "clip_id": clip_id,
+                "path": first_frame_path,
+                "artifact": copy.deepcopy(video_artifact),
+                "reference_artifact": copy.deepcopy(reference_artifact),
                 "status_map": copy.deepcopy(state.status),
             }
 

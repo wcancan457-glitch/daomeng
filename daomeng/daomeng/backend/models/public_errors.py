@@ -71,9 +71,9 @@ def public_video_error(exc: Exception, provider: str = "视频模型") -> str:
     if "invalidparameter" in lower or "invalid parameter" in lower or "unsupportedparameter" in lower:
         return prefix + "提交参数不被当前模型接受，请检查模型版本、时长、分辨率和可选参数。"
     if "输入图片不存在" in str(exc):
-        return prefix + "首帧参考图记录存在，但文件已失效。请返回参考图阶段重新上传或生成一次。"
+        return prefix + "首帧参考图记录存在，但文件已失效。请在当前视频片段上传一张新首帧后重试。"
     if "first_frame" in lower:
-        return prefix + "缺少可用的首帧参考图，请返回上一阶段补齐。"
+        return prefix + "缺少可用的首帧参考图，请在当前视频片段上传一张首帧后重试。"
     if "sensitive" in lower or "safety" in lower or "policy" in lower:
         return prefix + "提示词或参考素材触发了供应商内容安全策略。"
     if "服务器没有获得可用的视频文件" in str(exc) or "download" in lower:

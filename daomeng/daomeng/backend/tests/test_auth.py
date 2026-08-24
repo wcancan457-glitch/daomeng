@@ -438,18 +438,67 @@ def test_projects_and_tasks_are_isolated_by_user() -> None:
             "video_generation_mode": "first_frame",
             "video_first_frame_model": "doubao-seedance-2-0-260128",
         })
-        project_state.artifacts["video_generation"] = {
-            "clips": [{
-                "id": "seg_01_02",
-                "name": "第1集-片段2",
-                "duration": 7,
-                "description": "镜头缓慢推进",
-                "selected": "",
-                "versions": [],
-                "status": "failed",
+        project_state.artifacts["reference_generation"] = {
+            "scenes": [{
+                "id": "seg_01_01",
+                "name": "第1集-片段1",
+                "selected": "code/result/image/missing-first-frame.png",
+                "versions": ["code/result/image/missing-first-frame.png"],
+                "status": "done",
             }],
         }
+        project_state.artifacts["video_generation"] = {
+            "clips": [
+                {
+                    "id": "seg_01_01",
+                    "name": "第1集-片段1",
+                    "duration": 5,
+                    "description": "人物回头",
+                    "selected": "",
+                    "versions": [],
+                    "status": "failed",
+                    "error": "视频模型：首帧参考图记录存在，但文件已失效。",
+                },
+                {
+                    "id": "seg_01_02",
+                    "name": "第1集-片段2",
+                    "duration": 7,
+                    "description": "镜头缓慢推进",
+                    "selected": "",
+                    "versions": [],
+                    "status": "failed",
+                },
+            ],
+        }
         workflow_engine.save_session_to_disk(project_id)
+
+        # A broken legacy first-frame path can be replaced directly from the
+        # video stage without rerunning reference generation.
+        first_frame_upload = client.post(
+            f"/api/project/{project_id}/video/seg_01_01/first-frame",
+            headers=auth_header(first_token),
+            files={"file": ("first-frame.png", image_buffer.getvalue(), "image/png")},
+        )
+        assert first_frame_upload.status_code == 200
+        first_frame_payload = first_frame_upload.json()
+        assert first_frame_payload["path"]
+        repaired_clip = next(
+            item for item in first_frame_payload["artifact"]["clips"] if item["id"] == "seg_01_01"
+        )
+        repaired_scene = next(
+            item for item in first_frame_payload["reference_artifact"]["scenes"] if item["id"] == "seg_01_01"
+        )
+        assert repaired_clip["status"] == "pending"
+        assert "error" not in repaired_clip
+        assert repaired_scene["selected"] == first_frame_payload["path"]
+        assert repaired_scene["source"] == "video_stage_upload"
+
+        denied_first_frame_upload = client.post(
+            f"/api/project/{project_id}/video/seg_01_01/first-frame",
+            headers=auth_header(second_token),
+            files={"file": ("first-frame.png", image_buffer.getvalue(), "image/png")},
+        )
+        assert denied_first_frame_upload.status_code == 404
 
         def fake_download_task_result(_self, task_id, save_path, expected_model=None, expected_duration=None):
             assert task_id == "cgt-test-recovery-123"
@@ -475,7 +524,9 @@ def test_projects_and_tasks_are_isolated_by_user() -> None:
                 json={"task_id": "cgt-test-recovery-123"},
             )
         assert recovered_video.status_code == 200
-        recovered_clip = recovered_video.json()["artifact"]["clips"][0]
+        recovered_clip = next(
+            item for item in recovered_video.json()["artifact"]["clips"] if item["id"] == "seg_01_02"
+        )
         assert recovered_clip["status"] == "done"
         assert recovered_clip["provider_task_id"] == "cgt-test-recovery-123"
         assert recovered_clip["elapsed_seconds"] == 187
@@ -487,6 +538,14 @@ def test_projects_and_tasks_are_isolated_by_user() -> None:
             json={"task_id": "cgt-test-recovery-123"},
         )
         assert denied_recovery.status_code == 404
+
+        duplicate_recovery = client.post(
+            f"/api/project/{project_id}/video/seg_01_01/recover",
+            headers=auth_header(first_token),
+            json={"task_id": "cgt-test-recovery-123"},
+        )
+        assert duplicate_recovery.status_code == 400
+        assert "已经恢复到" in duplicate_recovery.json()["detail"]
 
         project_state.current_stage = WorkflowStage.CHARACTER_DESIGN
         project_state.status[WorkflowStage.CHARACTER_DESIGN.value] = "waiting"

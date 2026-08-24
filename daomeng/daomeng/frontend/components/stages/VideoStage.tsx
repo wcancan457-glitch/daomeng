@@ -1,13 +1,13 @@
 'use client';
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { RefreshCw, ChevronLeft, ChevronRight, Loader, AlertCircle, AlertTriangle, Play, Edit2, Save, X, CloudDownload } from 'lucide-react';
+import { RefreshCw, ChevronLeft, ChevronRight, Loader, AlertCircle, AlertTriangle, Play, Edit2, Save, X, CloudDownload, Upload } from 'lucide-react';
 import type { StageViewProps } from './types';
 import { assetUrl } from './utils';
 import StageActions from './StageActions';
 import StageProgress from './StageProgress';
 import { authenticatedFetch } from '@/lib/auth';
-import { recoverVideoTask } from '@/lib/workflowApi';
+import { recoverVideoTask, uploadVideoFirstFrame } from '@/lib/workflowApi';
 
 /* ─── 类型 ─── */
 interface ClipItem {
@@ -144,6 +144,9 @@ function ClipRow({
   onRecover,
   isRecovering,
   recoveryError,
+  onUploadFirstFrame,
+  isUploadingFirstFrame,
+  uploadFirstFrameError,
 }: {
   clip: ClipItem;
   editDesc?: string;
@@ -163,6 +166,9 @@ function ClipRow({
   onRecover?: () => void;
   isRecovering?: boolean;
   recoveryError?: string;
+  onUploadFirstFrame?: (file: File) => void;
+  isUploadingFirstFrame?: boolean;
+  uploadFirstFrameError?: string;
 }) {
   const isRunning = clip.status === 'running' || isRegenerating;
   const isPending = clip.status === 'pending';
@@ -170,9 +176,10 @@ function ClipRow({
   const hasChanges = editDesc !== clip.description;
   const hasVideo = Boolean(clip.selected) || clip.versions.length > 0;
   const canGenerateMissing = Boolean(allowMissingGenerate) && !hasVideo && !isRunning && !isRegenerating;
+  const firstFrameUploadDisabled = Boolean(isUploadingFirstFrame || isStageRunning);
 
   return (
-    <div className={`flex flex-col xl:flex-row border rounded-xl overflow-hidden bg-white ${disabled ? 'opacity-50' : ''} ${
+    <div className={`flex flex-col xl:flex-row border rounded-xl overflow-hidden bg-white ${
       isFailed ? 'border-red-200' : 'border-gray-200'
     }`}>
       {/* 左侧: 描述信息 */}
@@ -278,11 +285,44 @@ function ClipRow({
           <button
             onClick={onRecover}
             disabled={isRecovering}
-            className="mt-2 flex items-center gap-1.5 self-start px-3 py-1.5 rounded-lg text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 disabled:text-gray-400 disabled:bg-gray-100"
+            className="mt-2 flex items-center gap-1.5 self-start px-3 py-1.5 rounded-lg text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 disabled:text-blue-300 disabled:bg-blue-50"
           >
             {isRecovering ? <Loader className="w-3 h-3 animate-spin" /> : <CloudDownload className="w-3 h-3" />}
-            {isRecovering ? '正在取回视频' : '恢复火山方舟任务'}
+            {isRecovering ? '正在取回视频' : '找回本片段已有任务'}
           </button>
+        )}
+        {!hasVideo && onUploadFirstFrame && (
+          <label
+            className={`mt-2 inline-flex w-fit items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium transition-colors ${
+              firstFrameUploadDisabled
+                ? `${isUploadingFirstFrame ? 'cursor-wait' : 'cursor-not-allowed'} bg-gray-100 text-gray-400`
+                : 'cursor-pointer bg-emerald-50 text-emerald-700 hover:bg-emerald-100 focus-within:ring-2 focus-within:ring-emerald-300'
+            }`}
+          >
+            {isUploadingFirstFrame ? <Loader className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+            {isUploadingFirstFrame ? '正在上传首帧' : '上传或替换首帧'}
+            <input
+              type="file"
+              accept="image/jpeg,image/png,image/webp"
+              disabled={firstFrameUploadDisabled}
+              className="sr-only"
+              onChange={event => {
+                const file = event.currentTarget.files?.[0];
+                event.currentTarget.value = '';
+                if (file) onUploadFirstFrame(file);
+              }}
+            />
+          </label>
+        )}
+        {!hasVideo && onUploadFirstFrame && (
+          <p className="mt-1.5 text-[11px] leading-relaxed text-gray-500">
+            首帧上传完成后，再由你点击“生成”；不会自动调用视频模型。
+          </p>
+        )}
+        {uploadFirstFrameError && (
+          <p className="mt-2 break-words text-[11px] leading-relaxed text-red-600" role="alert">
+            {uploadFirstFrameError}
+          </p>
         )}
         {recoveryError && (
           <p className="mt-2 break-words text-[11px] leading-relaxed text-red-600" role="alert">
@@ -432,6 +472,9 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
   const [recoveringIds, setRecoveringIds] = useState<Set<string>>(new Set());
   const [recoveryErrors, setRecoveryErrors] = useState<Record<string, string>>({});
+  const [uploadedFirstFrameIds, setUploadedFirstFrameIds] = useState<Set<string>>(new Set());
+  const [uploadingFirstFrameIds, setUploadingFirstFrameIds] = useState<Set<string>>(new Set());
+  const [uploadFirstFrameErrors, setUploadFirstFrameErrors] = useState<Record<string, string>>({});
 
   // 当分镜数据变化时，初始化编辑描述
   useEffect(() => {
@@ -553,12 +596,24 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
   };
 
   const handleRecover = async (clipId: string) => {
-    const taskId = window.prompt('粘贴火山方舟任务 ID（cgt- 开头）。恢复不会重新生成或重复扣费。');
+    const clip = clips.find(item => item.id === clipId);
+    const taskId = window.prompt(
+      `仅粘贴与“${clip?.name || clipId}（${clip?.duration || '?'}s）”完全对应的火山方舟任务 ID。恢复不会重新生成或重复扣费。`,
+    );
     if (!taskId?.trim()) return;
+    const normalizedTaskId = taskId.trim();
+    const usedBy = clips.find(item => item.id !== clipId && item.provider_task_id === normalizedTaskId);
+    if (usedBy) {
+      setRecoveryErrors(prev => ({
+        ...prev,
+        [clipId]: `这个任务已经用于“${usedBy.name}（${usedBy.duration || '?'}s）”，不能重复用于当前片段。当前片段需要自己的任务。`,
+      }));
+      return;
+    }
     setRecoveringIds(prev => new Set(prev).add(clipId));
     setRecoveryErrors(prev => ({ ...prev, [clipId]: '' }));
     try {
-      const result = await recoverVideoTask(sessionId, clipId, taskId.trim());
+      const result = await recoverVideoTask(sessionId, clipId, normalizedTaskId);
       onUpdateArtifact?.(result.artifact);
     } catch (error: any) {
       setRecoveryErrors(prev => ({
@@ -567,6 +622,37 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
       }));
     } finally {
       setRecoveringIds(prev => {
+        const next = new Set(prev);
+        next.delete(clipId);
+        return next;
+      });
+    }
+  };
+
+  const handleUploadFirstFrame = async (clipId: string, file: File) => {
+    if (!['image/jpeg', 'image/png', 'image/webp'].includes(file.type)) {
+      setUploadFirstFrameErrors(prev => ({ ...prev, [clipId]: '仅支持 JPG、PNG 或 WebP 图片。' }));
+      return;
+    }
+    if (file.size > 25 * 1024 * 1024) {
+      setUploadFirstFrameErrors(prev => ({ ...prev, [clipId]: '图片不能超过 25 MB。' }));
+      return;
+    }
+
+    setUploadingFirstFrameIds(prev => new Set(prev).add(clipId));
+    setUploadFirstFrameErrors(prev => ({ ...prev, [clipId]: '' }));
+    try {
+      const result = await uploadVideoFirstFrame(sessionId, clipId, file);
+      setUploadedFirstFrameIds(prev => new Set(prev).add(clipId));
+      setRecoveryErrors(prev => ({ ...prev, [clipId]: '' }));
+      onUpdateArtifact?.(result.artifact);
+    } catch (error) {
+      setUploadFirstFrameErrors(prev => ({
+        ...prev,
+        [clipId]: error instanceof Error ? error.message : '上传首帧失败',
+      }));
+    } finally {
+      setUploadingFirstFrameIds(prev => {
         const next = new Set(prev);
         next.delete(clipId);
         return next;
@@ -666,13 +752,15 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
                     <div className="space-y-4">
                       {epClips.map(clip => {
                         // 检查是否有参考图
-                        const hasRef = hasReferenceImage(clip.id);
+                        const recordedRef = hasReferenceImage(clip.id);
+                        const referenceIsInvalid = /首帧参考图.*(?:失效|不存在)|输入图片不存在/.test(clip.error || '');
+                        const hasRef = uploadedFirstFrameIds.has(clip.id) || (recordedRef && !referenceIsInvalid);
                         return (
                           <div key={clip.id} className="relative">
                             {!hasRef && (
                               <div className="mb-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700 flex items-center gap-2">
                                 <AlertTriangle className="w-3.5 h-3.5" />
-                                未检测到首帧参考图，请先完成参考图生成
+                                当前首帧不可用。可在本片段直接补传，不需要返回前面重走流程。
                               </div>
                             )}
                             <ClipRow
@@ -694,6 +782,9 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
                               onRecover={() => handleRecover(clip.id)}
                               isRecovering={recoveringIds.has(clip.id)}
                               recoveryError={recoveryErrors[clip.id]}
+                              onUploadFirstFrame={file => handleUploadFirstFrame(clip.id, file)}
+                              isUploadingFirstFrame={uploadingFirstFrameIds.has(clip.id)}
+                              uploadFirstFrameError={uploadFirstFrameErrors[clip.id]}
                             />
                           </div>
                         );

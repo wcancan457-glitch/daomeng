@@ -380,6 +380,30 @@ export async function recoverVideoTask(
   return resp.json();
 }
 
+export async function uploadVideoFirstFrame(
+  sessionId: string,
+  clipId: string,
+  file: File,
+): Promise<{
+  status: string;
+  path: string;
+  artifact: any;
+  reference_artifact: any;
+  status_map: Record<string, string>;
+}> {
+  const formData = new FormData();
+  formData.append('file', file);
+  const resp = await authenticatedFetch(
+    `/api/project/${sessionId}/video/${encodeURIComponent(clipId)}/first-frame`,
+    { method: 'POST', body: formData },
+  );
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: '上传首帧失败' }));
+    throw new Error(err.detail || '上传首帧失败');
+  }
+  return resp.json();
+}
+
 export async function checkSceneAssets(sessionId: string, sceneNumber: number): Promise<{
   scene_number: number;
   reference_images: number;
