@@ -851,19 +851,25 @@ class WorkflowEngine:
                 current_versions = current.get("versions") if isinstance(current.get("versions"), list) else []
                 item_versions = item.get("versions") if isinstance(item.get("versions"), list) else []
                 merged_versions = WorkflowEngine._merge_asset_versions(current_versions, item_versions)
+                from config import settings
+
+                keep_current_selection = bool(current.get("selected")) and WorkflowEngine._asset_exists(
+                    settings.CODE_DIR,
+                    str(current.get("selected") or ""),
+                )
                 if len(item_versions) > len(current_versions):
                     merged_item = {**current, **copy.deepcopy(item)}
                     merged_item["versions"] = merged_versions
-                    if current.get("selected"):
+                    if keep_current_selection:
                         merged_item["selected"] = current.get("selected")
                         if item.get("status") in {"done", "failed"}:
                             merged_item["status"] = "done"
                     by_id[item_id] = merged_item
                 elif len(item_versions) == len(current_versions):
                     merged_item = {**current, **copy.deepcopy(item)}
-                    if not item.get("selected") and current.get("selected"):
+                    if not item.get("selected") and keep_current_selection:
                         merged_item["selected"] = current.get("selected")
-                    if current.get("selected"):
+                    if keep_current_selection:
                         merged_item["selected"] = current.get("selected")
                         if item.get("status") in {"done", "failed"}:
                             merged_item["status"] = "done"
@@ -2034,7 +2040,14 @@ class WorkflowEngine:
     def _asset_exists(code_dir: str, path: str) -> bool:
         if not path:
             return False
-        candidate = path if os.path.isabs(path) else os.path.join(code_dir, path.lstrip('/'))
+        raw = str(path).replace("\\", "/")
+        lower = raw.lower()
+        marker = lower.rfind("/code/")
+        if marker >= 0:
+            raw = raw[marker + len("/code/"):]
+        elif lower.startswith("code/"):
+            raw = raw[len("code/"):]
+        candidate = raw if os.path.isabs(raw) else os.path.join(code_dir, raw.lstrip('/'))
         return os.path.exists(candidate)
 
     @classmethod

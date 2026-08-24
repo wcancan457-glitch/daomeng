@@ -7,6 +7,7 @@ from core.agents.character_agent import CharacterDesignerAgent
 from core.agents.reference_agent import ReferenceGeneratorAgent
 from core.agents.script_agent import ScriptWriterAgent
 from core.agents.video_agent import VideoDirectorAgent
+from core.orchestrator import WorkflowEngine
 from models.image_seedream import supports_sequential_image_generation
 from models.public_errors import is_retryable_media_error, public_image_error, public_video_error
 from models.video_seedance import SeedanceVideoClient
@@ -158,6 +159,91 @@ def test_video_generation_failure_is_actionable_and_persisted(tmp_path) -> None:
     )
     assert payload["payload"]["clips"][0]["status"] == "failed"
     assert payload["payload"]["clips"][0]["error"] == message
+
+
+def test_video_generation_stops_before_later_paid_clips_after_first_failure(tmp_path, monkeypatch) -> None:
+    first_frame = tmp_path / "first.png"
+    second_frame = tmp_path / "second.png"
+    first_frame.write_bytes(b"first")
+    second_frame.write_bytes(b"second")
+    segments = [
+        {
+            "segment_id": "seg_01_01",
+            "episode_number": 1,
+            "segment_number": 1,
+            "shots": [{"content": "第一个镜头", "duration": 5}],
+            "total_duration": 5,
+        },
+        {
+            "segment_id": "seg_01_02",
+            "episode_number": 1,
+            "segment_number": 2,
+            "shots": [{"content": "第二个镜头", "duration": 7}],
+            "total_duration": 7,
+        },
+    ]
+    agent = VideoDirectorAgent()
+    calls = []
+
+    def fail_first(sid, segment_id, *_args, **_kwargs):
+        calls.append((sid, segment_id))
+        raise FileNotFoundError("输入图片不存在: first-frame")
+
+    monkeypatch.setattr(agent, "_generate_one", fail_first)
+    monkeypatch.setattr(agent, "_list_versions", lambda *_args: [])
+
+    result = asyncio.run(agent.process({
+        "session_id": "sequential-contract",
+        "style": "realistic",
+        "video_generation_mode": "first_frame",
+        "video_first_frame_model": "doubao-seedance-2-0-260128",
+        "generation_requested": True,
+        "enable_concurrency": True,
+        "_session_artifacts": {
+            "storyboard": {"episodes": [{"episode_number": 1, "segments": segments}]},
+            "character_design": {"characters": [], "settings": []},
+            "reference_generation": {"scenes": [
+                {"id": "seg_01_01", "selected": str(first_frame)},
+                {"id": "seg_01_02", "selected": str(second_frame)},
+            ]},
+            "video_generation": {"clips": []},
+        },
+    }))
+
+    assert calls == [("sequential-contract", "seg_01_01")]
+    clips = result["payload"]["clips"]
+    assert clips[0]["status"] == "failed"
+    assert clips[1]["status"] == "pending"
+    assert "尚未调用视频模型" in clips[1]["blocked_reason"]
+
+
+def test_regeneration_replaces_a_selected_image_only_when_the_old_file_is_missing(tmp_path) -> None:
+    replacement = tmp_path / "replacement.png"
+    replacement.write_bytes(b"new-image")
+    missing = tmp_path / "missing.png"
+    merged = WorkflowEngine._merge_item_regeneration_payload(
+        {
+            "scenes": [{
+                "id": "seg_01_01",
+                "selected": str(missing),
+                "versions": [str(missing)],
+                "status": "done",
+            }],
+        },
+        {
+            "scenes": [{
+                "id": "seg_01_01",
+                "selected": str(replacement),
+                "versions": [str(missing), str(replacement)],
+                "status": "done",
+            }],
+        },
+        ["scenes"],
+        {"scenes": {"seg_01_01"}},
+    )
+
+    assert merged["scenes"][0]["selected"] == str(replacement)
+    assert merged["scenes"][0]["status"] == "done"
 
 
 def test_seedance_submit_payload_omits_null_optional_parameters() -> None:

@@ -8,8 +8,10 @@ import zipfile
 from typing import Optional
 
 from fastapi import APIRouter, File, HTTPException, Request, UploadFile
+from fastapi.responses import FileResponse
 from PIL import Image, UnidentifiedImageError
 
+from accounts.media_store import restore_media_path
 from accounts.ownership import asset_path_owned_by
 from api.auth_context import request_user_id, require_admin
 from api.security_layer import MAX_UPLOAD_BYTES
@@ -181,6 +183,25 @@ def resolve_uploaded_media_params(params: dict, user_id: str) -> dict:
         if resolved.get(key):
             resolved[key] = resolve_user_media_path(str(resolved[key]), user_id)
     return resolved
+
+
+@router.get("/code/{file_path:path}")
+async def generated_media(file_path: str, request: Request):
+    """Serve project media and rehydrate it from durable storage when Render restarted."""
+    user_id = request_user_id(request)
+    normalized = str(file_path or "").replace("\\", "/").strip("/")
+    if not asset_path_owned_by(normalized, user_id):
+        raise HTTPException(status_code=404, detail="资源不存在。")
+    restored_path = restore_media_path(normalized)
+    if not restored_path:
+        raise HTTPException(
+            status_code=404,
+            detail="原媒体文件已失效，请在对应阶段重新生成或重新上传。",
+        )
+    return FileResponse(
+        restored_path,
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 @router.post("/api/upload_file")

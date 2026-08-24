@@ -24,6 +24,7 @@ interface ClipItem {
   provider_task_id?: string;
   provider_status?: string;
   elapsed_seconds?: number;
+  blocked_reason?: string;
 }
 
 /* ─── 水平滚动视频画廊 ─── */
@@ -347,8 +348,8 @@ function ClipRow({
           </div>
         ) : isPending && !hasVideo ? (
           <div className="flex items-center justify-center h-32 aspect-video bg-gray-50/30 rounded-lg border border-dashed border-gray-200">
-            <div className="flex items-center gap-2 text-gray-400 text-xs px-4">
-              <span>等待生成视频...</span>
+            <div className="flex max-w-xs items-center gap-2 px-4 text-center text-xs text-gray-500">
+              <span>{clip.blocked_reason || '等待生成视频...'}</span>
             </div>
           </div>
         ) : isFailed && !hasVideo ? (
@@ -511,6 +512,7 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
   const hasClips = clips.length > 0;
   const canEdit = state.status === 'waiting' || state.status === 'completed';
   const failedClips = clips.filter(clip => clip.status === 'failed');
+  const blockedClips = clips.filter(clip => Boolean(clip.blocked_reason));
   const failureMessages = Array.from(new Set(failedClips.map(clip => clip.error).filter(Boolean)));
   // 兼容修复前创建的会话：旧版预览清单没有 generation_started 字段。
   // 只要所有片段都仍是纯 pending 且没有任何视频版本，就应视为“尚未提交”，
@@ -688,7 +690,7 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
           <h2 className="text-lg font-semibold text-gray-800">视频生成</h2>
         </div>
         <p className="text-sm text-gray-500 mb-4">
-          将场景参考图转化为视频片段，支持逐项重新生成
+          按剧情顺序将参考图转化为视频；前一片段失败时会暂停，修复后再继续
         </p>
 
         {isGenerationPrepared && (
@@ -715,6 +717,11 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
               </ul>
             ) : (
               <p className="mt-1 text-red-800">本次任务由旧版服务执行，具体错误没有被保存。请等待修复版本上线后只重试一个片段，页面会显示真实失败原因。</p>
+            )}
+            {blockedClips.length > 0 && (
+              <p className="mt-2 text-red-800">
+                已按顺序暂停：后续 {blockedClips.length} 个片段尚未调用视频模型，不会产生对应生成费用。
+              </p>
             )}
           </div>
         )}

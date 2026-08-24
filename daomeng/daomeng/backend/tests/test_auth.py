@@ -422,6 +422,17 @@ def test_projects_and_tasks_are_isolated_by_user() -> None:
         absolute_reference.unlink()
         assert not absolute_reference.exists()
 
+        # A browser image request does not first call the artifact endpoint.
+        # The /code route must therefore restore the durable file on demand.
+        client.cookies.set("daomeng_access", first_token)
+        direct_media = client.get(f"/code/{relative_reference}")
+        assert direct_media.status_code == 200
+        assert direct_media.content == image_buffer.getvalue()
+        assert absolute_reference.is_file()
+
+        absolute_reference.unlink()
+        assert not absolute_reference.exists()
+
         restored_artifact = client.get(
             f"/api/project/{project_id}/artifact/character_design",
             headers=auth_header(first_token),

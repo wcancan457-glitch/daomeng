@@ -5,7 +5,6 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 
 _backend_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if _backend_dir not in sys.path:
@@ -51,7 +50,7 @@ from api.routers import (
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("Starting 导梦 API")
-    logger.info("Code directory mounted at /code: %s", settings.CODE_DIR)
+    logger.info("Generated media directory served at /code: %s", settings.CODE_DIR)
     await pipeline_queue.start()
     try:
         yield
@@ -75,7 +74,6 @@ app.add_middleware(
 logger.info("CORS enabled for origins: %s", ALLOWED_ORIGINS)
 
 os.makedirs(settings.CODE_DIR, exist_ok=True)
-app.mount("/code", StaticFiles(directory=settings.CODE_DIR), name="code")
 
 app.include_router(health_router)
 app.include_router(files_router)

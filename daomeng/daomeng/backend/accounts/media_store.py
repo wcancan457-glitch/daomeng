@@ -210,3 +210,38 @@ def restore_project_media(project_id: str, payload: Any) -> dict[str, Any]:
                 if os.path.exists(temp_path):
                     os.remove(temp_path)
     return {"restored": restored, "missing": missing}
+
+
+def restore_media_path(relative_path: str) -> str | None:
+    """Restore one authenticated generated asset on demand after an ephemeral-disk restart."""
+    normalized = str(relative_path or "").replace("\\", "/").strip("/")
+    parts = [part for part in normalized.split("/") if part]
+    if not parts or parts[0] != "result" or ".." in parts:
+        return None
+
+    absolute_path = _absolute_media_path(normalized)
+    if os.path.isfile(absolute_path):
+        return absolute_path
+    if Path(normalized).suffix.lower() not in MEDIA_EXTENSIONS:
+        return None
+    if not _enabled():
+        return None
+
+    with SessionLocal() as db:
+        record = db.scalar(
+            select(ProjectMediaAsset).where(ProjectMediaAsset.relative_path == normalized)
+        )
+        if not record or not record.content:
+            return None
+        content = bytes(record.content)
+
+    os.makedirs(os.path.dirname(absolute_path), exist_ok=True)
+    fd, temp_path = tempfile.mkstemp(dir=os.path.dirname(absolute_path), suffix=".restore")
+    try:
+        with os.fdopen(fd, "wb") as destination:
+            destination.write(content)
+        os.replace(temp_path, absolute_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.remove(temp_path)
+    return absolute_path

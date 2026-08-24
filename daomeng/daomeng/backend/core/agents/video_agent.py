@@ -4,7 +4,7 @@
 - 从编排器注入的 artifacts["storyboard"] 读取拍摄片段(Segments)
 - 视频提示词：风格控制 + 人物列表 + 分镜列表(分镜1: [时长] content...)
 - 参考图：从 artifacts["reference_generation"] 读取
-- 支持逐项并发生成、实时预览、重新生成
+- 支持按故事顺序逐项生成、实时预览、重新生成
 """
 
 import asyncio
@@ -12,7 +12,6 @@ import glob
 import logging
 import os
 import re
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Callable, Dict, List, Optional
 
 from .base_agent import AgentInterface
@@ -462,6 +461,7 @@ class VideoDirectorAgent(AgentInterface):
         clips = []
         errors = errors or {}
         clip_map = {c.get("id"): c for c in (video_clips or []) if isinstance(c, dict) and c.get("id")}
+        previous_failure = False
         for idx, seg in enumerate(segments, 1):
             segment_id = seg["segment_id"]
             versions = self._list_versions(sid, segment_id)
@@ -488,7 +488,13 @@ class VideoDirectorAgent(AgentInterface):
                 clip["error"] = errors[segment_id]
             elif isinstance(existing_clip, dict) and existing_clip.get("error") and not versions:
                 clip["error"] = existing_clip["error"]
+            if previous_failure and not versions and not errors.get(segment_id):
+                clip["blocked_reason"] = "前序片段生成失败，本片段尚未调用视频模型。"
+                if clip.get("status") == "running":
+                    clip["status"] = "pending"
             clips.append(clip)
+            if errors.get(segment_id):
+                previous_failure = True
         return {
             "payload": {
                 "session_id": sid,
@@ -530,7 +536,7 @@ class VideoDirectorAgent(AgentInterface):
 
         session_meta = self._session_meta(input_data)
         video_generation_mode, video_model = self._select_video_model(input_data, session_meta)
-        from models.config_model import get_max_concurrency, get_model_config
+        from models.config_model import get_model_config
 
         if "seedance-2-5" in video_model.lower() or "seedance2.5" in video_model.lower():
             raise ValueError(
@@ -540,9 +546,6 @@ class VideoDirectorAgent(AgentInterface):
         if model_meta.get("provider") == "unknown":
             raise ValueError(f"视频模型 {video_model} 尚未在项目中注册，不能开始生成。")
 
-        enable_concurrency = input_data.get("enable_concurrency", False)
-        concurrency = get_max_concurrency(video_model, enable_concurrency)
-        
         video_ratio = input_data.get("video_ratio", "16:9")
         video_resolution = input_data.get("video_resolution", "720P")
         video_sound = "on"
@@ -596,80 +599,80 @@ class VideoDirectorAgent(AgentInterface):
                 def regen_run():
                     from models.public_errors import public_video_error
                     done = 0
-                    with ThreadPoolExecutor(max_workers=concurrency) as executor:
-                        futs = {}
-                        for seg_id in regen_ids:
-                            seg = segment_map.get(seg_id)
-                            clip = clip_map.get(seg_id) if clip_map.get(seg_id) else None
-                            if not seg:
-                                continue
-                            prompt = self._assemble_prompt(seg, style_prompt, character_art, video_data=clip)
+                    ordered_regen_ids = [
+                        seg["segment_id"]
+                        for seg in segments
+                        if seg.get("segment_id") in set(regen_ids)
+                    ]
+                    for seg_id in ordered_regen_ids:
+                        seg = segment_map.get(seg_id)
+                        clip = clip_map.get(seg_id) if clip_map.get(seg_id) else None
+                        if not seg:
+                            continue
+                        prompt = self._assemble_prompt(seg, style_prompt, character_art, video_data=clip)
 
-                            reference_image_paths = None
-                            if video_generation_mode == "reference":
-                                img_path = None
-                                reference_image_paths = self._get_segment_reference_assets(seg, character_art)
-                                if not reference_image_paths:
-                                    logger.warning("VideoDirectorAgent: %s 参考图模式未匹配到第二阶段人物/场景图", seg_id)
-                            else:
-                                img_path = self._get_reference_image(sid, seg_id, scene_map)
-                            duration = seg.get("total_duration", 10)
-                            seg_index = segments.index(seg)
-                            last_img_path = self._get_next_reference_image(sid, seg_index, segments, scene_map)
-                            if video_generation_mode == "start_end_frame" and not last_img_path:
-                                logger.warning("VideoDirectorAgent: %s 首尾帧模式缺少尾帧，回退为首帧生视频入参", seg_id)
-                            existing_versions = self._list_versions(sid, seg_id)
-                            provider_task_id = self._resume_task_id(clip)
-                            task_state_callback = self._make_task_state_callback(
-                                seg_id,
-                                existing_versions,
-                                clip,
-                            )
-                            self._report_progress("视频生成", f"启动生成: {seg_id}", 5, data={
-                                "asset_complete": {
-                                    "type": "clips", "id": seg_id,
-                                    "status": "running",
-                                    "versions": existing_versions,
-                                }
-                            })
-                            fut = executor.submit(
-                                self._generate_one, sid, seg_id, prompt,
+                        reference_image_paths = None
+                        if video_generation_mode == "reference":
+                            img_path = None
+                            reference_image_paths = self._get_segment_reference_assets(seg, character_art)
+                            if not reference_image_paths:
+                                logger.warning("VideoDirectorAgent: %s 参考图模式未匹配到第二阶段人物/场景图", seg_id)
+                        else:
+                            img_path = self._get_reference_image(sid, seg_id, scene_map)
+                        duration = seg.get("total_duration", 10)
+                        seg_index = segments.index(seg)
+                        last_img_path = self._get_next_reference_image(sid, seg_index, segments, scene_map)
+                        if video_generation_mode == "start_end_frame" and not last_img_path:
+                            logger.warning("VideoDirectorAgent: %s 首尾帧模式缺少尾帧，回退为首帧生视频入参", seg_id)
+                        existing_versions = self._list_versions(sid, seg_id)
+                        provider_task_id = self._resume_task_id(clip)
+                        task_state_callback = self._make_task_state_callback(
+                            seg_id,
+                            existing_versions,
+                            clip,
+                        )
+                        self._report_progress("视频生成", f"启动生成: {seg_id}", 5, data={
+                            "asset_complete": {
+                                "type": "clips", "id": seg_id,
+                                "status": "running",
+                                "versions": existing_versions,
+                            }
+                        })
+                        try:
+                            _, res_path = self._generate_one(
+                                sid, seg_id, prompt,
                                 img_path, video_model, duration,
                                 video_sound, video_shot_type, video_ratio, video_resolution,
                                 video_generation_mode, last_img_path, reference_image_paths,
                                 provider_task_id, task_state_callback,
                             )
-                            futs[fut] = seg_id
-                        for fut in as_completed(futs):
-                            sid_done = futs[fut]
-                            try:
-                                _, res_path = fut.result()
-                            except Exception as e:
-                                logger.error(f"Regen future error for {sid_done}: {e}")
-                                res_path = None
-                                generation_errors[sid_done] = public_video_error(e, "视频模型")
-                            done += 1
-                            pct = 5 + int(90 * done / max(1, len(regen_ids)))
-                            if res_path:
-                                versions = self._list_versions(sid, sid_done)
-                                self._report_progress("视频生成", f"完成: {sid_done}", pct, data={
-                                    "asset_complete": {
-                                        "type": "clips", "id": sid_done,
-                                        "status": "done",
-                                        "selected": res_path,
-                                        "versions": versions,
-                                        "error": None,
-                                    }
-                                })
-                            else:
-                                self._report_progress("视频生成", f"失败: {sid_done}", pct, data={
-                                    "asset_complete": {
-                                        "type": "clips", "id": sid_done,
-                                        "status": "failed",
-                                        "selected": "", "versions": [],
-                                        "error": generation_errors.get(sid_done) or "视频模型：生成失败，未返回可用文件。",
-                                    }
-                                })
+                        except Exception as e:
+                            logger.error("Sequential video regeneration failed for %s: %s", seg_id, e)
+                            res_path = None
+                            generation_errors[seg_id] = public_video_error(e, "视频模型")
+                        done += 1
+                        pct = 5 + int(90 * done / max(1, len(ordered_regen_ids)))
+                        if res_path:
+                            versions = self._list_versions(sid, seg_id)
+                            self._report_progress("视频生成", f"完成: {seg_id}", pct, data={
+                                "asset_complete": {
+                                    "type": "clips", "id": seg_id,
+                                    "status": "done",
+                                    "selected": res_path,
+                                    "versions": versions,
+                                    "error": None,
+                                }
+                            })
+                        else:
+                            self._report_progress("视频生成", f"失败并暂停后续片段: {seg_id}", pct, data={
+                                "asset_complete": {
+                                    "type": "clips", "id": seg_id,
+                                    "status": "failed",
+                                    "selected": "", "versions": [],
+                                    "error": generation_errors.get(seg_id) or "视频模型：生成失败，未返回可用文件。",
+                                }
+                            })
+                            break
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, regen_run)
                 
@@ -725,74 +728,68 @@ class VideoDirectorAgent(AgentInterface):
                 self._report_progress("视频生成", "所有视频片段已存在", 95)
                 return
             done = 0
-            with ThreadPoolExecutor(max_workers=concurrency) as executor:
-                futs = {}
-                for (
-                    seg_id,
-                    prompt,
-                    img_path,
-                    dur,
-                    last_img_path,
-                    reference_image_paths,
-                    provider_task_id,
-                    local_clip,
-                ) in tasks:
-                    task_state_callback = self._make_task_state_callback(seg_id, [], local_clip)
-                    # 提交前立即发送正在运行的状态，让前端 UI 更新
-                    self._report_progress("视频生成", f"启动生成: {seg_id}", 5, data={
-                        "asset_complete": {
-                            "type": "clips", "id": seg_id,
-                            "status": "running"
-                        }
-                    })
-                    fut = executor.submit(
-                        self._generate_one, sid, seg_id, prompt,
+            for (
+                seg_id,
+                prompt,
+                img_path,
+                dur,
+                last_img_path,
+                reference_image_paths,
+                provider_task_id,
+                local_clip,
+            ) in tasks:
+                if self.cancellation_check and self.cancellation_check():
+                    break
+                task_state_callback = self._make_task_state_callback(seg_id, [], local_clip)
+                self._report_progress("视频生成", f"按顺序生成: {seg_id}", 5, data={
+                    "asset_complete": {
+                        "type": "clips", "id": seg_id,
+                        "status": "running"
+                    }
+                })
+                try:
+                    _, res_path = self._generate_one(
+                        sid, seg_id, prompt,
                         img_path, video_model, dur,
                         video_sound, video_shot_type, video_ratio, video_resolution,
                         video_generation_mode, last_img_path, reference_image_paths,
                         provider_task_id, task_state_callback,
                     )
-                    futs[fut] = seg_id
-                for fut in as_completed(futs):
-                    sid_done = futs[fut]
-                    try:
-                        _, res_path = fut.result()
-                    except Exception as e:
-                        logger.error(f"Video future error for {sid_done}: {e}")
-                        res_path = None
-                        generation_errors[sid_done] = public_video_error(e, "视频模型")
-                    done += 1
-                    pct = 5 + int(90 * done / max(1, len(tasks)))
-                    if res_path:
-                        versions = self._list_versions(sid, sid_done)
-                        self._report_progress("视频生成", f"完成: {sid_done}", pct, data={
-                            "asset_complete": {
-                                "type": "clips", "id": sid_done,
-                                "status": "done",
-                                "selected": res_path,
-                                "versions": versions,
-                                "error": None,
-                            }
-                        })
-                    else:
-                        self._report_progress("视频生成", f"失败: {sid_done}", pct, data={
-                            "asset_complete": {
-                                "type": "clips", "id": sid_done,
-                                "status": "failed",
-                                "selected": "", "versions": [],
-                                "error": generation_errors.get(sid_done) or "视频模型：生成失败，未返回可用文件。",
-                            }
-                        })
-                    if self.cancellation_check and self.cancellation_check():
-                        for f in futs:
-                            if not f.done():
-                                f.cancel()
-                        break
+                except Exception as e:
+                    logger.error("Sequential video generation failed for %s: %s", seg_id, e)
+                    res_path = None
+                    generation_errors[seg_id] = public_video_error(e, "视频模型")
+                done += 1
+                pct = 5 + int(90 * done / max(1, len(tasks)))
+                if res_path:
+                    versions = self._list_versions(sid, seg_id)
+                    self._report_progress("视频生成", f"完成: {seg_id}", pct, data={
+                        "asset_complete": {
+                            "type": "clips", "id": seg_id,
+                            "status": "done",
+                            "selected": res_path,
+                            "versions": versions,
+                            "error": None,
+                        }
+                    })
+                else:
+                    self._report_progress("视频生成", f"失败并暂停后续片段: {seg_id}", pct, data={
+                        "asset_complete": {
+                            "type": "clips", "id": seg_id,
+                            "status": "failed",
+                            "selected": "", "versions": [],
+                            "error": generation_errors.get(seg_id) or "视频模型：生成失败，未返回可用文件。",
+                        }
+                    })
+                    break
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, run)
         
         # 同步到 session artifacts
         self._update_session_video_data(sid, segments, style_prompt)
         
-        self._report_progress("视频生成", "完成", 100)
+        if generation_errors:
+            self._report_progress("视频生成", "已暂停，请修复失败片段后继续", 100)
+        else:
+            self._report_progress("视频生成", "完成", 100)
         return self._build_payload(sid, segments, video_clips, generation_errors)

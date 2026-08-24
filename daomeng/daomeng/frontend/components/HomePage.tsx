@@ -678,7 +678,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
                     onChange={e => setEnableConcurrency(e.target.checked)}
                     className="w-4 h-4 rounded border-gray-300 text-blue-500 focus:ring-blue-500/30"
                   />
-                  <span className="text-gray-600">并发生成（测试阶段建议关闭）</span>
+                  <span className="text-gray-600">图片素材并发（视频始终按片段顺序生成）</span>
                 </label>
                 </div>
               </div>

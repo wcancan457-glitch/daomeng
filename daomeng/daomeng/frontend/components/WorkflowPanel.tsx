@@ -120,6 +120,15 @@ function getStageProgressSnapshot(status: any, stageId: string): Partial<StageSt
   };
 }
 
+function normalizeStageStatus(value: unknown, fallback: StageStatus = 'pending'): StageStatus {
+  if (value === 'session_completed') return 'completed';
+  if (value === 'pending' || value === 'running' || value === 'waiting'
+    || value === 'completed' || value === 'error' || value === 'stopped') {
+    return value;
+  }
+  return fallback;
+}
+
 export default function WorkflowPanel() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -1203,12 +1212,32 @@ export default function WorkflowPanel() {
 
   // ── 恢复历史项目 ──
   const handleResumeProject = async (sid: string, targetStage: string | null = null) => {
-    // 如果正在执行的就是同一个项目，直接恢复视图，不重置状态
+    // 同一项目内回退也必须重新读取后端：这会触发持久化媒体恢复，
+    // 并避免前端继续使用部署前已经失效的本地文件状态。
     if (sid === sessionId) {
       const runningStage = STAGE_ORDER.find(s => stageStates[s]?.status === 'running');
       const waitingStage = STAGE_ORDER.find(s => stageStates[s]?.status === 'waiting');
       const lastCompleted = [...STAGE_ORDER].reverse().find(s => stageStates[s]?.status === 'completed');
-      setActiveStage(targetStage || runningStage || waitingStage || lastCompleted || STAGE_ORDER[0]);
+      const nextStage = targetStage || runningStage || waitingStage || lastCompleted || STAGE_ORDER[0];
+      try {
+        const status = await getProjectStatus(sid);
+        setGlobalStatusMap(status.status || {});
+        const backendStatus = status.status?.[nextStage];
+        const nextStatus = normalizeStageStatus(backendStatus, stageStates[nextStage]?.status || 'pending');
+        const statusArtifacts = (status as any).artifacts;
+        const artifact = statusArtifacts?.[nextStage]
+          || (await getArtifact(sid, nextStage).then(result => result.artifact).catch(() => null));
+        updateStageState(nextStage, {
+          status: nextStatus,
+          artifact: artifact ?? stageStates[nextStage]?.artifact,
+          ...getStageProgressSnapshot(status, nextStage),
+          error: nextStatus === 'error' ? (status.error || '执行出错') : null,
+        });
+      } catch {
+        // Keep the last local snapshot visible; item-level reload/regenerate
+        // actions remain available when the network is temporarily unavailable.
+      }
+      setActiveStage(nextStage);
       return;
     }
 

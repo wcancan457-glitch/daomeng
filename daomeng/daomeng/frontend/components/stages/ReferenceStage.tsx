@@ -40,7 +40,9 @@ function ImageGallery({
   const [failedImages, setFailedImages] = useState<Set<string>>(new Set());
 
   useEffect(() => {
-    setFailedImages(current => new Set([...current].filter(path => versions.includes(path))));
+    // Returning to this stage triggers a fresh backend media check. A path
+    // that failed before a Render rehydrate must be allowed to load again.
+    setFailedImages(new Set());
   }, [versions]);
 
   const scroll = (dir: 'left' | 'right') => {
@@ -93,9 +95,24 @@ function ImageGallery({
             >
               <div className="relative group/img h-32 min-w-44 bg-gray-50">
                 {failedImages.has(path) ? (
-                  <div className="flex h-full min-w-44 flex-col items-center justify-center gap-1 px-3 text-center text-[11px] text-red-500" role="status">
+                  <div className="flex h-full min-w-44 flex-col items-center justify-center gap-1.5 px-3 text-center text-[11px] text-red-600" role="status">
                     <AlertCircle className="h-4 w-4" />
-                    <span>图片加载失败，请刷新后重试</span>
+                    <span>原图片暂时无法读取</span>
+                    <button
+                      type="button"
+                      onClick={event => {
+                        event.stopPropagation();
+                        setFailedImages(current => {
+                          const next = new Set(current);
+                          next.delete(path);
+                          return next;
+                        });
+                      }}
+                      className="rounded-md bg-red-50 px-2 py-1 font-medium text-red-700 hover:bg-red-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-red-300"
+                    >
+                      重新加载
+                    </button>
+                    <span className="text-red-700/80">仍失败时可在左侧重新生成</span>
                   </div>
                 ) : (
                   <img

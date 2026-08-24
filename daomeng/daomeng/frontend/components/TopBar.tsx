@@ -287,7 +287,7 @@ function ModelSelector({
               onChange={e => update('enable_concurrency', e.target.checked)}
               className="w-3.5 h-3.5 rounded border-gray-300 text-blue-500 focus:ring-blue-500/30"
             />
-            <span className="text-gray-500">并发生成</span>
+            <span className="text-gray-500">图片素材并发（视频始终按顺序）</span>
           </label>
         </div>
       )}
