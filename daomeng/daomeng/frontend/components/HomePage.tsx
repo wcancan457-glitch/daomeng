@@ -2,7 +2,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import Image from 'next/image';
-import { Play, Settings2, Clock, ArrowRight, Zap, CheckCircle, Trash2, X, Globe, ListOrdered, Upload, Loader2 } from 'lucide-react';
+import { Settings2, Clock, ArrowRight, Zap, CheckCircle, Trash2, X, Globe, ListOrdered, Upload, Loader2, Clapperboard } from 'lucide-react';
 import clsx from 'clsx';
 import { PROMPT_EXAMPLES } from '@/config/examples';
 import {
@@ -36,6 +36,8 @@ export interface ProjectParams {
   enable_concurrency?: boolean;
   web_search?: boolean;
   episodes?: number;
+  creation_mode?: 'trial' | 'full' | 'expanded';
+  trial_duration_seconds?: number;
 }
 
 interface HistoryItem {
@@ -216,7 +218,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
 
   const selectedVideoModeLabel = VIDEO_GENERATION_MODES.find(item => item.id === selectedVideoMode)?.label || '首帧生视频';
 
-  const handleStart = (auto?: boolean) => {
+  const handleStart = (auto?: boolean, creationMode: 'trial' | 'full' = 'full') => {
     if (!canStart) return;
     onStartProject({
       idea,
@@ -235,8 +237,10 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
       video_model: activeVideoModel,
       enable_concurrency: enableConcurrency,
       web_search: webSearch,
-      episodes,
-    }, auto);
+      episodes: creationMode === 'trial' ? 1 : episodes,
+      creation_mode: creationMode,
+      trial_duration_seconds: 15,
+    }, creationMode === 'trial' ? true : auto);
   };
 
   const handleExampleClick = (text: string) => {
@@ -320,13 +324,13 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
             onKeyDown={e => {
               if (e.key === 'Enter' && !e.shiftKey && (idea.trim() || uploadedFile)) {
                 e.preventDefault();
-                handleStart(false);
+                handleStart(true, 'trial');
               }
             }}
           />
 
-          <div className="flex items-center justify-between mt-3 pt-3 border-t border-gray-100">
-            <div className="flex items-center gap-3">
+          <div className="mt-3 flex flex-col gap-3 border-t border-gray-100 pt-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="flex flex-wrap items-center gap-2 sm:gap-3">
               <div className="relative">
                 <button
                   onClick={() => setShowEpisodesPanel(!showEpisodesPanel)}
@@ -418,7 +422,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
                 联网搜索
               </button>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2 lg:justify-end">
               {/* 隐藏的文件输入框 */}
               <input
                 type="file"
@@ -461,33 +465,38 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
                 )}
               </button>
               <button
-                onClick={() => handleStart(false)}
+                onClick={() => handleStart(true, 'trial')}
                 disabled={!canStart}
                 className={clsx(
-                  'flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-medium transition-colors',
+                  'flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-semibold transition-colors',
                   canStart
-                    ? 'bg-blue-500 text-white hover:bg-blue-600 shadow-sm'
+                    ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
                     : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                 )}
+                title="仅生成支撑15秒成片所需的角色、场景和镜头"
               >
-                <Play className="w-4 h-4" />
-                逐步创作
+                <Clapperboard className="w-4 h-4" />
+                先做15秒试片
               </button>
               <button
-                onClick={() => handleStart(true)}
+                onClick={() => handleStart(true, 'full')}
                 disabled={!canStart}
                 className={clsx(
                   'flex items-center gap-2 px-4 py-2 rounded-xl text-sm font-medium transition-colors',
                   canStart
-                    ? 'bg-amber-500 text-white hover:bg-amber-600 shadow-sm'
+                    ? 'bg-white text-gray-700 hover:bg-gray-50 border border-gray-200 shadow-sm'
                     : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                 )}
-                title="自动执行全部六个阶段，无需手动确认"
+                title="按当前集数直接执行完整制作"
               >
                 <Zap className="w-4 h-4" />
-                一键生成
+                直接制作完整内容
               </button>
             </div>
+          </div>
+          <div className="mt-3 flex items-center justify-end gap-2 text-xs text-blue-700">
+            <Clock className="h-3.5 w-3.5" />
+            <span>试片只准备15秒需要的素材；满意后可原项目扩展成1–2分钟完整一集</span>
           </div>
           {(configLoading || configError) && (
             <div className={clsx('mt-3 text-xs', configError ? 'text-red-500' : 'text-gray-400')}>
@@ -710,7 +719,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
             <button
               onClick={() => setManageMode(m => !m)}
               className={`ml-auto text-xs px-2 py-0.5 rounded transition-colors ${
-                manageMode ? 'bg-red-100 text-red-600' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'
+                manageMode ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
               {manageMode ? '完成' : '管理'}

@@ -1,13 +1,18 @@
 'use client';
 
 import React from 'react';
-import { Download, Film } from 'lucide-react';
+import { ArrowRight, Download, Film, Loader2 } from 'lucide-react';
 import type { StageViewProps } from './types';
 import { assetUrl } from './utils';
 import StageProgress from './StageProgress';
 import StageActions from './StageActions';
 
-export default function PostProductionStage({ state, onConfirm, onRegenerate, isRunning, hasPendingItems, hasNextStageStarted, artifacts, scriptArtifact }: StageViewProps) {
+interface PostProductionStageProps extends StageViewProps {
+  creationMode?: 'trial' | 'full' | 'expanded';
+  onExpandTrial?: () => void;
+}
+
+export default function PostProductionStage({ state, onConfirm, onRegenerate, isRunning, hasPendingItems, hasNextStageStarted, artifacts, scriptArtifact, creationMode, onExpandTrial }: PostProductionStageProps) {
   // 提取最终视频列表
   const finalVideos: any[] = React.useMemo(
     () => state.artifact?.final_videos || [],
@@ -42,7 +47,9 @@ export default function PostProductionStage({ state, onConfirm, onRegenerate, is
     <div className="flex flex-col h-full">
       <div className="flex-1 min-w-0 overflow-y-auto p-4 sm:p-6">
         <h2 className="text-lg font-semibold text-gray-800 mb-1">后期剪辑</h2>
-        <p className="text-sm text-gray-500 mb-6">按剧集拼接视频，生成各集独立成片</p>
+        <p className="text-sm text-gray-500 mb-6">
+          {creationMode === 'trial' ? '15秒试片已沿用完整工作流完成，可先验证风格和人物表现' : '按剧集拼接视频，生成各集独立成片'}
+        </p>
 
         {/* 运行中 */}
         {state.status === 'running' && (
@@ -93,6 +100,36 @@ export default function PostProductionStage({ state, onConfirm, onRegenerate, is
               );
             })}
           </div>
+        )}
+
+        {creationMode === 'trial' && videosToDisplay.length > 0 && (
+          <section className="mb-10 rounded-2xl bg-blue-50 p-5 sm:flex sm:items-center sm:justify-between sm:gap-6">
+            <div className="max-w-2xl">
+              <h3 className="text-base font-semibold text-blue-950">这支试片可以直接交付，也可以继续长成完整一集</h3>
+              <p className="mt-1 text-sm leading-6 text-blue-800">
+                扩展会保留当前15秒作为开场，复用已有角色、场景、首帧和视频，只生成后续缺少的内容。
+              </p>
+            </div>
+            <div className="mt-4 flex flex-wrap gap-2 sm:mt-0 sm:shrink-0">
+              <a
+                href={assetUrl(videosToDisplay[0].path)}
+                download="导梦-15秒试片.mp4"
+                className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-blue-800 shadow-sm hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
+              >
+                <Download className="h-4 w-4" />
+                导出15秒试片
+              </a>
+              <button
+                type="button"
+                onClick={onExpandTrial}
+                disabled={isRunning}
+                className="inline-flex items-center gap-2 rounded-xl bg-blue-700 px-4 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-blue-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 disabled:cursor-not-allowed disabled:bg-blue-300"
+              >
+                {isRunning ? <Loader2 className="h-4 w-4 animate-spin" /> : <ArrowRight className="h-4 w-4" />}
+                {isRunning ? '正在扩展…' : '扩展为1–2分钟完整一集'}
+              </button>
+            </div>
+          </section>
         )}
 
         {state.status === 'completed' && videosToDisplay.length === 0 && (

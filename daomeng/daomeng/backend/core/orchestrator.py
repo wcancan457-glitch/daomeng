@@ -71,6 +71,10 @@ SESSION_META_KEYS = (
     "enable_concurrency",
     "web_search",
     "episodes",
+    "creation_mode",
+    "trial_duration_seconds",
+    "trial_status",
+    "target_duration_seconds",
 )
 
 
@@ -319,6 +323,55 @@ class WorkflowEngine:
             state.updated_at = datetime.now()
             self.save_session_to_disk(session_id)
             return {"status": "ok", "meta": copy.deepcopy(state.meta)}
+
+    def expand_trial_session(self, session_id: str) -> Dict[str, Any]:
+        """Preserve trial assets and reset the same session for a full-episode expansion."""
+        with self._state_lock:
+            state = self.get_state(session_id)
+            if not state:
+                raise KeyError(session_id)
+            if state.meta.get("creation_mode") != "trial":
+                raise ValueError("当前项目不是15秒试片，不能执行试片扩展。")
+            post_artifact = state.artifacts.get(WorkflowStage.POST_PRODUCTION.value)
+            if not isinstance(post_artifact, dict) or not (
+                post_artifact.get("final_videos") or post_artifact.get("final_video")
+            ):
+                raise ValueError("请先完成15秒试片，再扩展为完整一集。")
+
+            snapshot = {
+                stage.value: copy.deepcopy(state.artifacts.get(stage.value, {}))
+                for stage in STAGE_ORDER
+            }
+            state.artifacts["trial_snapshot"] = snapshot
+            # Keep reusable character/reference/video assets. Script and storyboard are rebuilt;
+            # post-production must run again after the continuation clips are ready.
+            for stage in (
+                WorkflowStage.SCRIPT_GENERATION,
+                WorkflowStage.STORYBOARD,
+                WorkflowStage.POST_PRODUCTION,
+            ):
+                state.artifacts.pop(stage.value, None)
+            for stage in STAGE_ORDER:
+                state.status[stage.value] = "pending"
+                state.stage_progress.pop(stage.value, None)
+
+            state.current_stage = WorkflowStage.SCRIPT_GENERATION
+            state.error = None
+            state.meta.update({
+                "creation_mode": "expanded",
+                "trial_status": "expanding",
+                "episodes": 1,
+                "target_duration_seconds": 90,
+            })
+            state.updated_at = datetime.now()
+            self.save_session_to_disk(session_id)
+            return {
+                "status": "ready",
+                "session_id": session_id,
+                "next_stage": WorkflowStage.SCRIPT_GENERATION.value,
+                "meta": copy.deepcopy(state.meta),
+                "status_map": copy.deepcopy(state.status),
+            }
 
     def prepare_stage_execution(self, session_id: str, stage: str, body: Dict[str, Any]) -> tuple[WorkflowState, Dict[str, Any]]:
         """Build stage input from current meta/artifacts without exposing mutable state to routers."""
@@ -967,6 +1020,27 @@ class WorkflowEngine:
             payload = result.get("payload", {})
             requires_intervention = result.get("requires_intervention", False)
 
+            # Trial constraints are enforced before any downstream image/video stage sees the storyboard.
+            if stage == WorkflowStage.STORYBOARD and isinstance(payload, dict):
+                from core.trial_mode import limit_trial_storyboard, merge_trial_opening
+
+                creation_mode = state.meta.get("creation_mode")
+                trial_seconds = int(state.meta.get("trial_duration_seconds") or 15)
+                if creation_mode == "trial":
+                    from models.config_model import get_model_config
+
+                    video_model = str(state.meta.get("video_model") or "")
+                    model_meta = get_model_config(video_model)
+                    duration_caps = (model_meta.get("capabilities") or {}).get("duration") or {}
+                    max_segment_seconds = int(duration_caps.get("max") or trial_seconds)
+                    payload = limit_trial_storyboard(payload, trial_seconds, max_segment_seconds)
+                    result["payload"] = payload
+                elif creation_mode == "expanded":
+                    snapshot = state.artifacts.get("trial_snapshot", {})
+                    trial_storyboard = snapshot.get(WorkflowStage.STORYBOARD.value, {}) if isinstance(snapshot, dict) else {}
+                    payload = merge_trial_opening(payload, trial_storyboard, trial_seconds)
+                    result["payload"] = payload
+
             with self._state_lock:
                 # 根据阶段类型处理数据持久化和同步逻辑
                 if stage == WorkflowStage.SCRIPT_GENERATION:
@@ -1014,6 +1088,11 @@ class WorkflowEngine:
                     state.status[stage.value] = "waiting"
 
                 state.updated_at = datetime.now()
+                if stage == WorkflowStage.POST_PRODUCTION and state.status.get(stage.value) == "completed":
+                    if state.meta.get("creation_mode") == "trial":
+                        state.meta["trial_status"] = "ready"
+                    elif state.meta.get("creation_mode") == "expanded":
+                        state.meta["trial_status"] = "expanded"
                 state.stage_progress[stage.value] = {
                     "phase": stage.value,
                     "step": "等待确认" if state.status.get(stage.value) == "waiting" else "已完成",

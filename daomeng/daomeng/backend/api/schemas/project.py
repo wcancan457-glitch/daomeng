@@ -22,6 +22,8 @@ class ProjectStartRequest(BaseModel):
     enable_concurrency: Optional[bool] = True
     web_search: Optional[bool] = False
     episodes: Optional[int] = None
+    creation_mode: Optional[str] = "full"
+    trial_duration_seconds: Optional[int] = 15
 
 
 class InterventionRequest(BaseModel):

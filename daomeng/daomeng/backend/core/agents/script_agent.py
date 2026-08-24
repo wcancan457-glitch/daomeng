@@ -369,6 +369,7 @@ class ScriptWriterAgent(AgentInterface):
             idea = input_data.get("idea", "")
             sid = input_data.get("session_id", "")
             style = input_data.get("style", "anime")
+            creation_mode = input_data.get("creation_mode", "full")
             llm_model = self._require_input(input_data, "llm_model")
             web_search = input_data.get("web_search", False)
             episodes = input_data.get("episodes")
@@ -380,6 +381,8 @@ class ScriptWriterAgent(AgentInterface):
             except (TypeError, ValueError):
                 logger.warning("[ScriptWriter] invalid episodes=%r; falling back to 4. session=%s", episodes, sid)
                 episodes = 4
+            if creation_mode in {"trial", "expanded"}:
+                episodes = 1
             is_zh = any('\u4e00' <= c <= '\u9fff' for c in idea)
 
             from config import settings as app_settings
@@ -441,33 +444,52 @@ class ScriptWriterAgent(AgentInterface):
                     repaired = await _trim_script_if_needed(repaired, f"{phase}集数修复后")
                 return repaired
 
-            # 1. Generate full script
-            _log_progress(10, "正在生成完整剧本文本初稿...")
-            prompt = _get_script_prompt("generate_script", "zh" if is_zh else "en").format(idea=idea, style=style, episodes=episodes)
+            # 1. Generate the script. Trial mode intentionally uses a shorter, single-pass prompt.
+            if creation_mode == "trial":
+                _log_progress(10, "正在生成15秒试片剧本...")
+                prompt = _get_script_prompt("generate_trial", "zh").format(idea=idea, style=style)
+            elif creation_mode == "expanded":
+                _log_progress(10, "正在沿用试片扩展完整一集...")
+                snapshot = self._session_artifacts(input_data).get("trial_snapshot", {})
+                trial_artifact = snapshot.get("script_generation", {}) if isinstance(snapshot, dict) else {}
+                trial_script = (
+                    trial_artifact.get("meta", {}).get("original_text")
+                    or "\n".join(str(ep.get("content") or "") for ep in trial_artifact.get("episodes", []))
+                )
+                prompt = _get_script_prompt("expand_trial", "zh").format(
+                    idea=idea,
+                    trial_script=trial_script,
+                    style=style,
+                )
+            else:
+                _log_progress(10, "正在生成完整剧本文本初稿...")
+                prompt = _get_script_prompt("generate_script", "zh" if is_zh else "en").format(idea=idea, style=style, episodes=episodes)
 
             full_script_text = await loop.run_in_executor(None, self._cancellable_query, llm, prompt, [], llm_model, True, sid, web_search)
             logger.info(f"[ScriptWriter] Initial script generated ({len(full_script_text)} chars)")
-            full_script_text = await _trim_script_if_needed(full_script_text, "初稿")
+            if creation_mode != "trial":
+                full_script_text = await _trim_script_if_needed(full_script_text, "初稿")
             full_script_text = await _repair_episode_count_if_needed(full_script_text, "初稿")
-            
-            _log_progress(20, "正在进行台词评估...")
-            eval_dialogue_prompt = _get_script_prompt("eval_dialogue", "zh" if is_zh else "en").format(script_text=full_script_text)
-            dialogue_critique = await loop.run_in_executor(None, self._cancellable_query, llm, eval_dialogue_prompt, [], llm_model, True, sid, web_search)
-            
-            _log_progress(30, "正在进行情节评估...")
-            eval_plot_prompt = _get_script_prompt("eval_plot", "zh" if is_zh else "en").format(script_text=full_script_text)
-            plot_critique = await loop.run_in_executor(None, self._cancellable_query, llm, eval_plot_prompt, [], llm_model, True, sid, web_search)
-            
-            _log_progress(40, "正在根据评估意见优化剧本...")
-            revise_prompt = _get_script_prompt("revise_script", "zh" if is_zh else "en").format(
-                script_text=full_script_text, 
-                dialogue_critique=dialogue_critique, 
-                plot_critique=plot_critique
-            )
-            full_script_text = await loop.run_in_executor(None, self._cancellable_query, llm, revise_prompt, [], llm_model, True, sid, web_search)
-            logger.info(f"[ScriptWriter] Final script generated ({len(full_script_text)} chars)")
-            full_script_text = await _trim_script_if_needed(full_script_text, "优化后")
-            full_script_text = await _repair_episode_count_if_needed(full_script_text, "优化后")
+
+            if creation_mode != "trial":
+                _log_progress(20, "正在进行台词评估...")
+                eval_dialogue_prompt = _get_script_prompt("eval_dialogue", "zh" if is_zh else "en").format(script_text=full_script_text)
+                dialogue_critique = await loop.run_in_executor(None, self._cancellable_query, llm, eval_dialogue_prompt, [], llm_model, True, sid, web_search)
+
+                _log_progress(30, "正在进行情节评估...")
+                eval_plot_prompt = _get_script_prompt("eval_plot", "zh" if is_zh else "en").format(script_text=full_script_text)
+                plot_critique = await loop.run_in_executor(None, self._cancellable_query, llm, eval_plot_prompt, [], llm_model, True, sid, web_search)
+
+                _log_progress(40, "正在根据评估意见优化剧本...")
+                revise_prompt = _get_script_prompt("revise_script", "zh" if is_zh else "en").format(
+                    script_text=full_script_text,
+                    dialogue_critique=dialogue_critique,
+                    plot_critique=plot_critique
+                )
+                full_script_text = await loop.run_in_executor(None, self._cancellable_query, llm, revise_prompt, [], llm_model, True, sid, web_search)
+                logger.info(f"[ScriptWriter] Final script generated ({len(full_script_text)} chars)")
+                full_script_text = await _trim_script_if_needed(full_script_text, "优化后")
+                full_script_text = await _repair_episode_count_if_needed(full_script_text, "优化后")
 
             _log_progress(60, "最终剧本生成完成，正在提取人物/场景信息...")
 
@@ -479,10 +501,34 @@ class ScriptWriterAgent(AgentInterface):
 
             all_characters = meta_data.get("characters", [])
             all_settings = meta_data.get("settings", [])
+            if creation_mode == "trial":
+                all_characters = all_characters[:2]
+                all_settings = all_settings[:1]
             for c in all_characters:
                 c["character_id"] = c.get("character_id") or self._gen_id("char")
             for s in all_settings:
                 s["setting_id"] = s.get("setting_id") or self._gen_id("set")
+
+            # Reuse trial asset IDs by name so character and setting images are not regenerated on expansion.
+            if creation_mode == "expanded":
+                snapshot = self._session_artifacts(input_data).get("trial_snapshot", {})
+                trial_script_artifact = snapshot.get("script_generation", {}) if isinstance(snapshot, dict) else {}
+                old_character_ids = {
+                    str(item.get("name") or "").strip(): item.get("character_id") or item.get("id")
+                    for item in trial_script_artifact.get("characters", [])
+                    if item.get("name")
+                }
+                old_setting_ids = {
+                    str(item.get("name") or "").strip(): item.get("setting_id") or item.get("id")
+                    for item in trial_script_artifact.get("settings", [])
+                    if item.get("name")
+                }
+                for character in all_characters:
+                    if old_character_ids.get(str(character.get("name") or "").strip()):
+                        character["character_id"] = old_character_ids[str(character.get("name") or "").strip()]
+                for setting in all_settings:
+                    if old_setting_ids.get(str(setting.get("name") or "").strip()):
+                        setting["setting_id"] = old_setting_ids[str(setting.get("name") or "").strip()]
 
             # 3. 解析各集数据 - 针对新版数组输出格式进行优化
             _log_progress(80, "开始结构化全集数据...")
@@ -538,7 +584,9 @@ class ScriptWriterAgent(AgentInterface):
                 "meta": {
                     "generation_model": llm_model,
                     "generation_prompt": idea,
-                    "original_text": full_script_text
+                    "original_text": full_script_text,
+                    "creation_mode": creation_mode,
+                    "trial_duration_seconds": input_data.get("trial_duration_seconds", 15),
                 },
                 "title": meta_data.get("title", "Generated Script"),
                 "logline": meta_data.get("logline", ""),

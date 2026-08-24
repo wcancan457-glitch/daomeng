@@ -91,7 +91,10 @@ async def start_project(req: ProjectStartRequest, request: Request):
         "video_model": req.video_model,
         "enable_concurrency": req.enable_concurrency if req.enable_concurrency is not None else True,
         "web_search": req.web_search if req.web_search is not None else False,
-        "episodes": req.episodes if req.episodes is not None else 4,
+        "episodes": 1 if req.creation_mode == "trial" else (req.episodes if req.episodes is not None else 4),
+        "creation_mode": "trial" if req.creation_mode == "trial" else "full",
+        "trial_duration_seconds": max(5, min(15, req.trial_duration_seconds or 15)),
+        "trial_status": "generating" if req.creation_mode == "trial" else None,
         "user_id": user_id,
     }
     meta["video_model"] = _active_video_model(meta)
@@ -117,8 +120,22 @@ async def start_project(req: ProjectStartRequest, request: Request):
             "episodes": meta["episodes"],
             "video_ratio": meta["video_ratio"],
             "video_resolution": meta["video_resolution"],
+            "creation_mode": meta["creation_mode"],
+            "trial_duration_seconds": meta["trial_duration_seconds"],
         }
     }
+
+
+@router.post("/api/project/{session_id}/expand-trial")
+async def expand_trial(session_id: str, request: Request):
+    """Turn an approved trial into one complete episode in the same workflow session."""
+    _require_project_access(request, session_id)
+    try:
+        return workflow_engine.expand_trial_session(session_id)
+    except KeyError:
+        raise HTTPException(404, "Session not found")
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
 
 
 @router.post("/api/project/{session_id}/execute/{stage}")

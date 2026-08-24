@@ -309,6 +309,8 @@ export async function startProject(params: {
   web_search?: boolean;
   expand_idea?: boolean;
   episodes?: number;
+  creation_mode?: 'trial' | 'full' | 'expanded';
+  trial_duration_seconds?: number;
 }): Promise<{ session_id: string; status: string; params: any }> {
   const resp = await authenticatedFetch('/api/project/start', {
     method: 'POST',
@@ -318,6 +320,23 @@ export async function startProject(params: {
   if (!resp.ok) {
     const err = await resp.json().catch(() => ({ detail: '项目创建失败' }));
     throw new Error(err.detail || '项目创建失败');
+  }
+  return resp.json();
+}
+
+export async function expandTrial(sessionId: string): Promise<{
+  status: string;
+  session_id: string;
+  next_stage: string;
+  meta: Record<string, any>;
+  status_map: Record<string, string>;
+}> {
+  const resp = await authenticatedFetch(`/api/project/${sessionId}/expand-trial`, {
+    method: 'POST',
+  });
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: '试片扩展失败' }));
+    throw new Error(err.detail || '试片扩展失败');
   }
   return resp.json();
 }

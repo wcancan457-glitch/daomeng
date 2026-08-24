@@ -16,6 +16,7 @@ import {
   updateModels,
   deleteSession,
   saveSelections,
+  expandTrial,
 } from '@/lib/workflowApi';
 import TopBar, { STAGES, type ModelConfig } from './TopBar';
 import HomePage, { type ProjectParams } from './HomePage';
@@ -544,6 +545,8 @@ export default function WorkflowPanel() {
         web_search: params.web_search,
         expand_idea: params.expand_idea,
         episodes: params.episodes,
+        creation_mode: params.creation_mode,
+        trial_duration_seconds: params.trial_duration_seconds,
       });
       setSessionId(result.session_id);
 
@@ -580,6 +583,8 @@ export default function WorkflowPanel() {
         enable_concurrency: params.enable_concurrency,
         web_search: params.web_search,
         episodes: params.episodes,
+        creation_mode: params.creation_mode,
+        trial_duration_seconds: params.trial_duration_seconds,
         auto_mode: useAutoMode,
       };
 
@@ -621,8 +626,98 @@ export default function WorkflowPanel() {
           return;
         }
       }
+      if (!stoppedRef.current && useAutoMode) {
+        setActiveStage('post_production');
+        router.push(`/?session=${result.session_id}&stage=post_production`);
+      }
     } catch (error: any) {
       if (!stoppedRef.current) console.error('Workflow error:', error);
+    } finally {
+      setIsRunning(false);
+    }
+  };
+
+  // ── 将已通过的15秒试片扩展为同一项目中的完整一集 ──
+  const handleExpandTrial = async () => {
+    if (!sessionId || !projectParams || isRunning) return;
+    setIsRunning(true);
+    stoppedRef.current = false;
+    handleAutoModeChange(true);
+
+    try {
+      const expansion = await expandTrial(sessionId);
+      const expandedParams: ProjectParams = {
+        ...projectParams,
+        creation_mode: 'expanded',
+        episodes: 1,
+        trial_duration_seconds: 15,
+      };
+      setProjectParams(expandedParams);
+      setGlobalStatusMap(expansion.status_map || {});
+      setStageStates(prev => {
+        const next = { ...prev };
+        for (const stageId of STAGE_ORDER) {
+          next[stageId] = {
+            ...next[stageId],
+            status: 'pending',
+            progress: 0,
+            progressMessage: '',
+            error: null,
+            artifact: ['character_design', 'reference_generation', 'video_generation'].includes(stageId)
+              ? next[stageId]?.artifact
+              : null,
+          };
+        }
+        return next;
+      });
+      setActiveStage('script_generation');
+      router.push(`/?session=${sessionId}&stage=script_generation`);
+
+      const inputData: Record<string, any> = {
+        session_id: sessionId,
+        idea: expandedParams.idea,
+        style: expandedParams.style,
+        video_ratio: expandedParams.video_ratio,
+        video_resolution: expandedParams.video_resolution,
+        llm_model: expandedParams.llm_model,
+        vlm_model: expandedParams.vlm_model,
+        image_t2i_model: expandedParams.image_t2i_model,
+        image_it2i_model: expandedParams.image_it2i_model,
+        video_generation_mode: expandedParams.video_generation_mode,
+        video_first_frame_model: expandedParams.video_first_frame_model,
+        video_start_end_model: expandedParams.video_start_end_model,
+        video_reference_model: expandedParams.video_reference_model,
+        video_model: expandedParams.video_model,
+        enable_concurrency: expandedParams.enable_concurrency,
+        web_search: expandedParams.web_search,
+        episodes: 1,
+        creation_mode: 'expanded',
+        trial_duration_seconds: 15,
+        auto_mode: true,
+      };
+
+      for (const stageId of STAGE_ORDER) {
+        if (stoppedRef.current) break;
+        setActiveStage(stageId);
+        await runStage(sessionId, stageId, inputData);
+        const status = await getProjectStatus(sessionId);
+        setGlobalStatusMap(status.status || {});
+        const stageStatus = status?.status?.[stageId];
+        if (stageStatus === 'completed' || stageStatus === 'session_completed') {
+          await continueWorkflow(sessionId);
+          updateStageState(stageId, { status: 'completed', progressMessage: '已自动确认' });
+          continue;
+        }
+        updateStageState(stageId, { status: stageStatus === 'waiting' ? 'waiting' : 'error' });
+        return;
+      }
+      setActiveStage('post_production');
+      router.push(`/?session=${sessionId}&stage=post_production`);
+    } catch (error: any) {
+      console.error('Expand trial error:', error);
+      updateStageState('post_production', {
+        error: error.message || '扩展完整一集失败，请稍后重试。',
+      });
     } finally {
       setIsRunning(false);
     }
@@ -1195,6 +1290,9 @@ export default function WorkflowPanel() {
           expand_idea: s.expand_idea || false,
           enable_concurrency: s.enable_concurrency || false,
           web_search: s.web_search || false,
+          episodes: s.episodes || 1,
+          creation_mode: s.creation_mode || 'full',
+          trial_duration_seconds: s.trial_duration_seconds || 15,
         });
       }
 
@@ -1384,6 +1482,8 @@ export default function WorkflowPanel() {
           acc[key] = stageStates[key].artifact;
           return acc;
         }, {})}
+        creationMode={projectParams?.creation_mode}
+        onExpandTrial={handleExpandTrial}
       />
     );
   };
