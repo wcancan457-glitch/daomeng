@@ -574,10 +574,12 @@ class WorkflowEngine:
                 
             all_sync_clips = []
             for ep in episodes:
-                if not isinstance(ep, dict): continue
+                if not isinstance(ep, dict):
+                    continue
                 ep_n = ep.get("episode_number", 0)
                 for s_i, seg in enumerate(ep.get("segments", []), 1):
-                    if not isinstance(seg, dict): continue
+                    if not isinstance(seg, dict):
+                        continue
                     seg_id = seg.get("segment_id", f"seg_{ep_n:02d}_{s_i:02d}")
                     
                     # 汇总 segment 级别的描述和时长
@@ -956,14 +958,22 @@ class WorkflowEngine:
                             item.get("versions"),
                             asset_update.get("versions"),
                         )
+                    if "error" in asset_update:
+                        if asset_update.get("error"):
+                            item["error"] = asset_update["error"]
+                        else:
+                            item.pop("error", None)
                     return
 
-            items.append({
+            new_item = {
                 "id": item_id,
                 "status": asset_update.get("status", "done"),
                 "selected": asset_update.get("selected", ""),
                 "versions": asset_update.get("versions", []),
-            })
+            }
+            if asset_update.get("error"):
+                new_item["error"] = asset_update["error"]
+            items.append(new_item)
 
         def wrapped_progress_callback(phase: str, step: str, percent: float, data: dict = None):
             with self._state_lock:

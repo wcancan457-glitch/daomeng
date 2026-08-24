@@ -3,20 +3,21 @@ Seedance 视频生成 API 客户端 (字节跳动 ARK)
 
 """
 
+import base64
+import logging
 import os
 import sys
+import time
+from typing import Optional
+
+import requests
 
 models_dir = os.path.dirname(os.path.abspath(__file__))
 backend_dir = os.path.dirname(models_dir)
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
-import time
-import logging
-import requests
-import base64
-from typing import Optional
-from config import Config
+from config import Config  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,54 @@ class SeedanceVideoClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
+
+    @staticmethod
+    def _build_submit_payload(
+        prompt: str,
+        image_base64: str,
+        model: str,
+        duration: int,
+        **kwargs,
+    ) -> dict:
+        content = []
+        if prompt:
+            content.append({"type": "text", "text": prompt})
+        content.append({
+            "type": "image_url",
+            "image_url": {"url": image_base64},
+            "role": "first_frame",
+        })
+
+        payload = {
+            "model": model,
+            "content": content,
+            "duration": duration,
+            "ratio": kwargs.get("ratio") or "adaptive",
+            "resolution": kwargs.get("resolution") or "720p",
+        }
+        # ARK 会校验可选字段的类型；None 不是“未设置”，发送 null 会导致参数错误。
+        for key in ("seed", "watermark", "generate_audio"):
+            value = kwargs.get(key)
+            if value is not None:
+                payload[key] = value
+        return payload
+
+    @staticmethod
+    def _provider_error(resp: requests.Response, action: str) -> RuntimeError:
+        try:
+            data = resp.json()
+        except ValueError:
+            data = None
+        if isinstance(data, dict):
+            error = data.get("error")
+            if isinstance(error, dict):
+                detail = error.get("message") or error.get("code")
+            else:
+                detail = data.get("message") or error
+        else:
+            detail = None
+        safe_detail = str(detail or resp.text or "未知错误").strip()[:1000]
+        return RuntimeError(f"Seedance {action}失败（HTTP {resp.status_code}）：{safe_detail}")
 
     def generate_video(
         self,
@@ -91,35 +140,7 @@ class SeedanceVideoClient:
         mime = "image/png" if ext == ".png" else "image/jpeg"
         image_base64 = f"data:{mime};base64,{img_data}"
 
-        # 构建 content 数组
-        content = []
-        if prompt:
-            content.append({
-                "type": "text",
-                "text": prompt
-            })
-        
-        # 图生视频-首帧
-        content.append({
-            "type": "image_url",
-            "image_url": {
-                "url": image_base64
-            },
-            "role": "first_frame"
-        })
-
-        payload = {
-            "model": model,
-            "content": content,
-            "duration": duration,
-            "ratio": kwargs.get("ratio", "adaptive"),
-            "resolution": kwargs.get("resolution", "720p")
-        }
-
-        # 合并其他可选参数 (如 seed, watermark)
-        for key in ["seed", "watermark", "generate_audio"]:
-            if key in kwargs:
-                payload[key] = kwargs[key]
+        payload = self._build_submit_payload(prompt, image_base64, model, duration, **kwargs)
 
         logger.info(f"SeedanceVideoClient: 提交任务 model={model}, duration={duration}s")
         resp = requests.post(
@@ -132,7 +153,7 @@ class SeedanceVideoClient:
         
         if not resp.ok:
             logger.error(f"Seedance 提交失败: {resp.text}")
-            resp.raise_for_status()
+            raise self._provider_error(resp, "提交任务")
             
         data = resp.json()
         task_id = data.get("id")
@@ -152,7 +173,8 @@ class SeedanceVideoClient:
                 timeout=30,
                 proxies=Config.requests_proxies("ark"),
             )
-            resp.raise_for_status()
+            if not resp.ok:
+                raise self._provider_error(resp, "查询任务")
             data = resp.json()
             
             status = data.get("status")

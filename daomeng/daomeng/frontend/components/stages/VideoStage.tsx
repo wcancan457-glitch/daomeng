@@ -252,9 +252,9 @@ function ClipRow({
             {isFailed ? '点击重试' : hasVideo ? '重新生成' : '生成'}
           </button>
         )}
-        {isFailed && clip.error && (
+        {isFailed && (
           <p className="mt-2 break-words text-[11px] leading-relaxed text-red-600" role="alert">
-            {clip.error}
+            {clip.error || '旧版任务未保存具体错误。请在修复版本上线后重试一次，以获取真实失败原因。'}
           </p>
         )}
       </div>
@@ -428,6 +428,8 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
 
   const hasClips = clips.length > 0;
   const canEdit = state.status === 'waiting' || state.status === 'completed';
+  const failedClips = clips.filter(clip => clip.status === 'failed');
+  const failureMessages = Array.from(new Set(failedClips.map(clip => clip.error).filter(Boolean)));
   // 兼容修复前创建的会话：旧版预览清单没有 generation_started 字段。
   // 只要所有片段都仍是纯 pending 且没有任何视频版本，就应视为“尚未提交”，
   // 而不是含糊地显示为“继续生成”。
@@ -555,6 +557,19 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
 
         {state.error && (
           <div className="text-sm text-red-600 bg-red-50 border border-red-200 p-4 rounded-xl mb-4">{state.error}</div>
+        )}
+
+        {failedClips.length > 0 && (
+          <div role="alert" className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-950">
+            <p className="font-medium">{failedClips.length} 个视频片段生成失败</p>
+            {failureMessages.length > 0 ? (
+              <ul className="mt-2 list-disc space-y-1 pl-5 text-red-800">
+                {failureMessages.map(message => <li key={message}>{message}</li>)}
+              </ul>
+            ) : (
+              <p className="mt-1 text-red-800">本次任务由旧版服务执行，具体错误没有被保存。请等待修复版本上线后只重试一个片段，页面会显示真实失败原因。</p>
+            )}
+          </div>
         )}
 
         {/* ═══ 视频列表 ═══ */}

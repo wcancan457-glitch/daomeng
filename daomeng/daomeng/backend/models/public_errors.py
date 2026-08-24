@@ -64,8 +64,12 @@ def public_video_error(exc: Exception, provider: str = "视频模型") -> str:
         return prefix + "生成任务响应超时，请稍后重试。"
     if "not found" in lower or "404" in lower or "尚未在项目中注册" in lower:
         return prefix + "模型 ID 不存在或尚未接入当前项目。"
+    if "invalidparameter" in lower or "invalid parameter" in lower or "unsupportedparameter" in lower:
+        return prefix + "提交参数不被当前模型接受，请检查模型版本、时长、分辨率和可选参数。"
     if "输入图片不存在" in str(exc) or "first_frame" in lower:
         return prefix + "缺少可用的首帧参考图，请返回上一阶段补齐。"
     if "sensitive" in lower or "safety" in lower or "policy" in lower:
         return prefix + "提示词或参考素材触发了供应商内容安全策略。"
+    if "服务器没有获得可用的视频文件" in str(exc) or "download" in lower:
+        return prefix + "模型任务可能已完成，但服务器下载结果失败，请稍后重试。"
     return prefix + "生成失败，请在管理端核对模型与 API 配置后重试。"

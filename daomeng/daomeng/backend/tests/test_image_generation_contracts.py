@@ -1,11 +1,14 @@
 import asyncio
 
+import pytest
+
 from core.agents.character_agent import CharacterDesignerAgent
 from core.agents.reference_agent import ReferenceGeneratorAgent
 from core.agents.script_agent import ScriptWriterAgent
 from core.agents.video_agent import VideoDirectorAgent
 from models.image_seedream import supports_sequential_image_generation
-from models.public_errors import is_retryable_media_error, public_image_error
+from models.public_errors import is_retryable_media_error, public_image_error, public_video_error
+from models.video_seedance import SeedanceVideoClient
 
 
 def test_seedream_full_does_not_receive_unsupported_sequential_parameter() -> None:
@@ -122,3 +125,63 @@ def test_paid_media_stages_prepare_before_generation() -> None:
     video_result = asyncio.run(VideoDirectorAgent().process(video_input))
     assert video_result["requires_intervention"] is True
     assert video_result["payload"]["generation_started"] is False
+
+
+def test_video_generation_failure_is_actionable_and_persisted(tmp_path) -> None:
+    agent = VideoDirectorAgent()
+    missing_frame = tmp_path / "missing-frame.png"
+
+    with pytest.raises(FileNotFoundError) as exc_info:
+        agent._generate_one(
+            "failure-contract",
+            "seg_01_01",
+            "镜头缓慢推进",
+            str(missing_frame),
+            "doubao-seedance-2-0-260128",
+            duration=5,
+        )
+
+    message = public_video_error(exc_info.value, "视频模型")
+    assert "缺少可用的首帧参考图" in message
+
+    payload = agent._build_payload(
+        "failure-contract",
+        [{
+            "segment_id": "seg_01_01",
+            "episode_number": 1,
+            "segment_number": 1,
+            "shots": [],
+            "total_duration": 5,
+        }],
+        errors={"seg_01_01": message},
+    )
+    assert payload["payload"]["clips"][0]["status"] == "failed"
+    assert payload["payload"]["clips"][0]["error"] == message
+
+
+def test_seedance_submit_payload_omits_null_optional_parameters() -> None:
+    payload = SeedanceVideoClient._build_submit_payload(
+        "镜头缓慢推进",
+        "data:image/png;base64,AAAA",
+        "doubao-seedance-2-0-260128",
+        5,
+        ratio="16:9",
+        resolution="720p",
+        seed=None,
+        watermark=None,
+        generate_audio=None,
+    )
+    assert "seed" not in payload
+    assert "watermark" not in payload
+    assert "generate_audio" not in payload
+
+    explicit = SeedanceVideoClient._build_submit_payload(
+        "镜头缓慢推进",
+        "data:image/png;base64,AAAA",
+        "doubao-seedance-2-0-260128",
+        5,
+        watermark=False,
+        generate_audio=False,
+    )
+    assert explicit["watermark"] is False
+    assert explicit["generate_audio"] is False

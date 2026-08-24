@@ -80,11 +80,11 @@ class VideoDirectorAgent(AgentInterface):
         if video_generation_mode == "reference":
             missing_refs = [path for path in reference_image_paths if not os.path.exists(path)]
             if not reference_image_paths or missing_refs:
-                logger.warning("Reference images missing for %s: %s", segment_id, missing_refs or reference_image_paths)
-                return segment_id, None
+                raise FileNotFoundError(
+                    f"输入图片不存在: {missing_refs or reference_image_paths or '未提供参考图'}"
+                )
         elif not img_path or not os.path.exists(img_path):
-            logger.warning(f"Image missing for {segment_id}: {img_path}")
-            return segment_id, None
+            raise FileNotFoundError(f"输入图片不存在: {img_path or '未提供首帧参考图'}")
 
         save_path = self._next_version_path(sid, segment_id)
         try:
@@ -103,15 +103,18 @@ class VideoDirectorAgent(AgentInterface):
                 last_image_path=last_image_path if video_generation_mode == "start_end_frame" else None,
                 reference_image_paths=reference_image_paths if video_generation_mode == "reference" else None,
             )
+            if not os.path.exists(save_path):
+                raise RuntimeError("视频模型调用结束，但服务器没有获得可用的视频文件。")
             return segment_id, save_path
         except Exception as e:
-            logger.error(f"Video gen failed for {segment_id}: {e}")
+            logger.exception("Video gen failed for %s: %s", segment_id, e)
             if os.path.exists(save_path):
                 try:
                     os.remove(save_path)
                 except Exception:
                     pass
-        return segment_id, None
+            # 必须让外层拿到供应商异常，才能转换为安全、可操作的错误并持久化。
+            raise
 
     # ─── 提示词组装 ───
 
@@ -489,7 +492,8 @@ class VideoDirectorAgent(AgentInterface):
                         for seg_id in regen_ids:
                             seg = segment_map.get(seg_id)
                             clip = clip_map.get(seg_id) if clip_map.get(seg_id) else None
-                            if not seg: continue
+                            if not seg:
+                                continue
                             prompt = self._assemble_prompt(seg, style_prompt, character_art, video_data=clip)
 
                             reference_image_paths = None
@@ -538,6 +542,7 @@ class VideoDirectorAgent(AgentInterface):
                                         "status": "done",
                                         "selected": res_path,
                                         "versions": versions,
+                                        "error": None,
                                     }
                                 })
                             else:
@@ -546,6 +551,7 @@ class VideoDirectorAgent(AgentInterface):
                                         "type": "clips", "id": sid_done,
                                         "status": "failed",
                                         "selected": "", "versions": [],
+                                        "error": generation_errors.get(sid_done) or "视频模型：生成失败，未返回可用文件。",
                                     }
                                 })
                 loop = asyncio.get_running_loop()
@@ -567,7 +573,8 @@ class VideoDirectorAgent(AgentInterface):
             for seg_index, seg in enumerate(segments):
                 seg_id = seg["segment_id"]
                 existing = self._list_versions(sid, seg_id)
-                if existing: continue
+                if existing:
+                    continue
                 prompt = self._assemble_prompt(seg, style_prompt, character_art)
                 reference_image_paths = None
                 if video_generation_mode == "reference":
@@ -621,6 +628,7 @@ class VideoDirectorAgent(AgentInterface):
                                 "status": "done",
                                 "selected": res_path,
                                 "versions": versions,
+                                "error": None,
                             }
                         })
                     else:
@@ -629,11 +637,13 @@ class VideoDirectorAgent(AgentInterface):
                                 "type": "clips", "id": sid_done,
                                 "status": "failed",
                                 "selected": "", "versions": [],
+                                "error": generation_errors.get(sid_done) or "视频模型：生成失败，未返回可用文件。",
                             }
                         })
                     if self.cancellation_check and self.cancellation_check():
                         for f in futs:
-                            if not f.done(): f.cancel()
+                            if not f.done():
+                                f.cancel()
                         break
         loop = asyncio.get_running_loop()
         await loop.run_in_executor(None, run)
