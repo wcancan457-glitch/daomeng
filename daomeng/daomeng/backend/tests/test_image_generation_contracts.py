@@ -161,6 +161,138 @@ def test_video_generation_failure_is_actionable_and_persisted(tmp_path) -> None:
     assert payload["payload"]["clips"][0]["error"] == message
 
 
+def test_video_generation_uses_latest_readable_reference_version(tmp_path) -> None:
+    missing_selected = tmp_path / "old-selected-missing.jpg"
+    newest_reference = tmp_path / "new-reference-v9.jpg"
+    newest_reference.write_bytes(b"durable-reference")
+
+    resolved = VideoDirectorAgent()._get_reference_image(
+        "reference-fallback-contract",
+        "seg_01_01",
+        {
+            "seg_01_01": {
+                "selected": str(missing_selected),
+                "versions": [str(missing_selected), str(newest_reference)],
+            }
+        },
+    )
+
+    assert resolved == str(newest_reference)
+
+
+def test_five_second_video_chain_receives_valid_reference_before_provider_call(
+    tmp_path, monkeypatch
+) -> None:
+    missing_selected = tmp_path / "lost-first-frame.jpg"
+    valid_version = tmp_path / "replacement-first-frame.jpg"
+    valid_version.write_bytes(b"first-frame")
+    output = tmp_path / "seg_01_01.mp4"
+    provider_calls = []
+    agent = VideoDirectorAgent()
+
+    def fake_generate_one(
+        sid, segment_id, prompt, image_path, model, duration, *_args, **_kwargs
+    ):
+        provider_calls.append({
+            "sid": sid,
+            "segment_id": segment_id,
+            "image_path": image_path,
+            "model": model,
+            "duration": duration,
+            "prompt": prompt,
+        })
+        assert Path(image_path).read_bytes() == b"first-frame"
+        output.write_bytes(b"five-second-video")
+        return segment_id, str(output)
+
+    monkeypatch.setattr(agent, "_generate_one", fake_generate_one)
+    monkeypatch.setattr(
+        agent,
+        "_list_versions",
+        lambda *_args: [str(output)] if output.exists() else [],
+    )
+
+    result = asyncio.run(agent.process({
+        "session_id": "five-second-chain-contract",
+        "style": "realistic",
+        "video_generation_mode": "first_frame",
+        "video_first_frame_model": "doubao-seedance-2-0-260128",
+        "video_ratio": "16:9",
+        "video_resolution": "720P",
+        "generation_requested": True,
+        "_session_artifacts": {
+            "storyboard": {
+                "episodes": [{
+                    "episode_number": 1,
+                    "segments": [{
+                        "segment_id": "seg_01_01",
+                        "episode_number": 1,
+                        "segment_number": 1,
+                        "characters": [],
+                        "shots": [{"content": "角色回头", "duration": 5}],
+                        "total_duration": 5,
+                    }],
+                }],
+            },
+            "character_design": {"characters": [], "settings": []},
+            "reference_generation": {
+                "scenes": [{
+                    "id": "seg_01_01",
+                    "selected": str(missing_selected),
+                    "versions": [str(missing_selected), str(valid_version)],
+                }],
+            },
+            "video_generation": {
+                "clips": [{
+                    "id": "seg_01_01",
+                    "status": "failed",
+                    "selected": "",
+                    "versions": [],
+                    "error": "视频模型：首帧参考图记录存在，但文件已失效。",
+                }],
+            },
+        },
+    }))
+
+    assert len(provider_calls) == 1
+    assert provider_calls[0]["image_path"] == str(valid_version)
+    assert provider_calls[0]["duration"] == 5
+    assert result["payload"]["clips"][0]["status"] == "done"
+
+
+def test_new_reference_clears_stale_video_first_frame_error() -> None:
+    engine = WorkflowEngine()
+    state = WorkflowState(session_id="reference-video-sync-contract")
+    state.artifacts = {
+        "video_generation": {
+            "clips": [{
+                "id": "seg_01_01",
+                "selected": "",
+                "versions": [],
+                "status": "failed",
+                "error": "视频模型：首帧参考图记录存在，但文件已失效。",
+            }],
+        },
+    }
+
+    engine._sync_artifacts_cross_stages(
+        state,
+        WorkflowStage.REFERENCE_GENERATION,
+        {
+            "scenes": [{
+                "id": "seg_01_01",
+                "selected": "code/result/image/new-reference.jpg",
+                "versions": ["code/result/image/new-reference.jpg"],
+                "status": "done",
+            }],
+        },
+    )
+
+    clip = state.artifacts["video_generation"]["clips"][0]
+    assert clip["status"] == "pending"
+    assert "error" not in clip
+
+
 def test_video_generation_stops_before_later_paid_clips_after_first_failure(tmp_path, monkeypatch) -> None:
     first_frame = tmp_path / "first.png"
     second_frame = tmp_path / "second.png"

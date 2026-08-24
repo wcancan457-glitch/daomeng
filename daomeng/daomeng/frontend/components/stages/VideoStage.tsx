@@ -289,7 +289,7 @@ function ClipRow({
             className="mt-2 flex items-center gap-1.5 self-start px-3 py-1.5 rounded-lg text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 disabled:text-blue-300 disabled:bg-blue-50"
           >
             {isRecovering ? <Loader className="w-3 h-3 animate-spin" /> : <CloudDownload className="w-3 h-3" />}
-            {isRecovering ? '正在取回视频' : '找回本片段已有任务'}
+            {isRecovering ? '正在取回视频' : '高级：按任务 ID 找回'}
           </button>
         )}
         {!hasVideo && onUploadFirstFrame && (
@@ -600,7 +600,7 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
   const handleRecover = async (clipId: string) => {
     const clip = clips.find(item => item.id === clipId);
     const taskId = window.prompt(
-      `仅粘贴与“${clip?.name || clipId}（${clip?.duration || '?'}s）”完全对应的火山方舟任务 ID。恢复不会重新生成或重复扣费。`,
+      `高级找回功能：仅粘贴与“${clip?.name || clipId}（${clip?.duration || '?'}s）”完全对应、以 cgt- 开头的火山方舟任务 ID。不要填写 total、序号或其他数字。正常生成不需要使用此功能。`,
     );
     if (!taskId?.trim()) return;
     const normalizedTaskId = taskId.trim();
@@ -761,13 +761,21 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
                         // 检查是否有参考图
                         const recordedRef = hasReferenceImage(clip.id);
                         const referenceIsInvalid = /首帧参考图.*(?:失效|不存在)|输入图片不存在/.test(clip.error || '');
-                        const hasRef = uploadedFirstFrameIds.has(clip.id) || (recordedRef && !referenceIsInvalid);
+                        // 参考图阶段可能已在失败之后新增了可用版本。旧 clip.error 只是
+                        // 历史结果，不能继续禁用重试；后端会在付费前逐个验证候选文件。
+                        const hasRef = uploadedFirstFrameIds.has(clip.id) || recordedRef;
                         return (
                           <div key={clip.id} className="relative">
                             {!hasRef && (
                               <div className="mb-2 px-3 py-2 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-700 flex items-center gap-2">
                                 <AlertTriangle className="w-3.5 h-3.5" />
                                 当前首帧不可用。可在本片段直接补传，不需要返回前面重走流程。
+                              </div>
+                            )}
+                            {hasRef && referenceIsInvalid && (
+                              <div className="mb-2 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs text-blue-700">
+                                <AlertTriangle className="h-3.5 w-3.5" />
+                                已检测到后来新增的参考图版本，可以直接重试；系统会自动选择第一张真实可读的版本。
                               </div>
                             )}
                             <ClipRow

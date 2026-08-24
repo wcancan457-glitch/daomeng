@@ -314,11 +314,21 @@ class VideoDirectorAgent(AgentInterface):
         """获取参考图路径：优先用选中的版本，次之用最新版本"""
         from accounts.media_store import resolve_media_file
 
-        # 1. 检查 session 中 artifacts.reference_generation.scenes 里的 selected
-        if segment_id in scene_map and scene_map[segment_id].get("selected"):
-            path = resolve_media_file(scene_map[segment_id]["selected"])
-            if path:
-                return path
+        # 1. 检查 session 中选中的版本。旧 selected 失效时，必须继续检查该片段
+        # 后来重新生成/上传的 versions，不能让一条陈旧路径阻断整条视频链路。
+        scene = scene_map.get(segment_id) if isinstance(scene_map, dict) else None
+        if isinstance(scene, dict):
+            candidates = [scene.get("selected")]
+            candidates.extend(reversed(scene.get("versions") or []))
+            seen = set()
+            for candidate in candidates:
+                value = str(candidate or "").strip()
+                if not value or value in seen:
+                    continue
+                seen.add(value)
+                path = resolve_media_file(value)
+                if path:
+                    return path
 
         # 2. 回退：扫描磁盘 Scenes 目录
         from .reference_agent import ReferenceGeneratorAgent

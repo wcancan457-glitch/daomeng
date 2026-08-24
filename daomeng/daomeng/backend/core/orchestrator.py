@@ -719,6 +719,45 @@ class WorkflowEngine:
                         if source.get(key):
                             setting[key] = source[key]
 
+        # 案例 4: 参考图重新生成/上传成功后，清除第五阶段遗留的首帧错误。
+        # 视频成品已经存在时不做改动；没有成品的片段回到可生成的 pending 状态。
+        if stage == WorkflowStage.REFERENCE_GENERATION:
+            scenes = payload.get("scenes", []) if isinstance(payload, dict) else []
+            ready_scene_ids = {
+                str(scene.get("id"))
+                for scene in scenes
+                if isinstance(scene, dict)
+                and scene.get("id")
+                and (scene.get("selected") or scene.get("versions"))
+                and scene.get("status") != "failed"
+            }
+            if not ready_scene_ids:
+                return
+
+            video_artifact = state.artifacts.get(WorkflowStage.VIDEO_GENERATION.value)
+            if not isinstance(video_artifact, dict):
+                return
+            for clip in video_artifact.get("clips", []):
+                if not isinstance(clip, dict) or str(clip.get("id")) not in ready_scene_ids:
+                    continue
+                if clip.get("selected") or clip.get("versions"):
+                    continue
+                error = str(clip.get("error") or "")
+                stale_reference_error = any(
+                    marker in error
+                    for marker in (
+                        "首帧参考图",
+                        "输入图片不存在",
+                        "上游角色或场景素材已更新",
+                        "请先重新生成参考图",
+                    )
+                )
+                if stale_reference_error:
+                    clip.pop("error", None)
+                    clip.pop("blocked_reason", None)
+                    clip.pop("upstream_changed", None)
+                    clip["status"] = "pending"
+
     def _recalculate_all_statuses(self, state: WorkflowState):
         """
         根据各阶段 artifacts 的数据完整性重新计算 status 字典。
