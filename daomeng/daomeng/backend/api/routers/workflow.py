@@ -208,6 +208,29 @@ async def get_artifact(session_id: str, stage: str, request: Request):
     raise HTTPException(404, f"Artifact for stage '{stage}' not found")
 
 
+@router.post("/api/project/{session_id}/video/{clip_id}/recover")
+async def recover_video_task(session_id: str, clip_id: str, request: Request):
+    """Recover an already-paid, succeeded Ark video task into the original project."""
+    _require_project_access(request, session_id)
+    try:
+        body = await request.json()
+    except Exception:
+        body = {}
+    task_id = str(body.get("task_id") or "").strip() if isinstance(body, dict) else ""
+    if not task_id:
+        raise HTTPException(400, "请填写火山方舟任务 ID")
+    try:
+        return workflow_engine.recover_seedance_video_task(session_id, clip_id, task_id)
+    except KeyError:
+        raise HTTPException(404, "Session not found")
+    except ValueError as exc:
+        raise HTTPException(400, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        from models.public_errors import public_video_error
+
+        raise HTTPException(409, detail=public_video_error(exc, "Seedance")) from exc
+
+
 @router.patch("/api/project/{session_id}/models")
 async def update_models(session_id: str, request: Request):
     _require_project_access(request, session_id)

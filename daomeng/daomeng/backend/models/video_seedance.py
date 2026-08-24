@@ -8,7 +8,7 @@ import logging
 import os
 import sys
 import time
-from typing import Optional
+from typing import Any, Callable, Optional
 
 import requests
 
@@ -116,16 +116,61 @@ class SeedanceVideoClient:
         if not self.api_key:
             raise RuntimeError("ARK_API_KEY not set.")
 
-        # 1. 提交任务
-        task_id = self._submit_task(prompt, image_path, model, duration, **kwargs)
+        task_state_callback = kwargs.pop("task_state_callback", None)
+        existing_task_id = str(kwargs.pop("provider_task_id", "") or "").strip()
+        max_wait_seconds = int(kwargs.pop("max_wait_seconds", 900) or 900)
+
+        # 已经拿到供应商任务 ID 时继续查询，避免页面断线或服务重启后重复计费。
+        if existing_task_id:
+            task_id = existing_task_id
+            self._notify_task_state(task_state_callback, {
+                "provider": "ark",
+                "provider_task_id": task_id,
+                "provider_status": "resuming",
+                "model": model,
+            })
+        else:
+            task_id = self._submit_task(prompt, image_path, model, duration, **kwargs)
+            self._notify_task_state(task_state_callback, {
+                "provider": "ark",
+                "provider_task_id": task_id,
+                "provider_status": "queued",
+                "model": model,
+            })
         
         # 2. 轮询等待
-        video_url = self._poll_until_done(task_id)
+        video_url = self._poll_until_done(
+            task_id,
+            max_wait_seconds=max_wait_seconds,
+            task_state_callback=task_state_callback,
+        )
         
         # 3. 下载视频
+        self._notify_task_state(task_state_callback, {
+            "provider": "ark",
+            "provider_task_id": task_id,
+            "provider_status": "downloading",
+            "model": model,
+        })
         self._download_video(video_url, save_path)
+        self._notify_task_state(task_state_callback, {
+            "provider": "ark",
+            "provider_task_id": task_id,
+            "provider_status": "succeeded",
+            "model": model,
+        })
         
         return video_url
+
+    @staticmethod
+    def _notify_task_state(callback: Optional[Callable[[dict[str, Any]], None]], data: dict[str, Any]) -> None:
+        if not callback:
+            return
+        try:
+            callback(data)
+        except Exception as exc:
+            # 状态回写失败不能中断已经付费的供应商生成任务。
+            logger.warning("Seedance task state callback failed: %s", exc)
 
     def _submit_task(self, prompt: str, image_path: str, model: str, duration: int, **kwargs) -> str:
         # 根据 Seedance 2.0 文档更新接口路径
@@ -162,45 +207,117 @@ class SeedanceVideoClient:
             
         return task_id
 
-    def _poll_until_done(self, task_id: str, max_polls: int = 120, interval: int = 5) -> str:
-        # 同步更新查询接口路径
+    def get_task(self, task_id: str) -> dict[str, Any]:
         url = f"{self.base_url}/contents/generations/tasks/{task_id}"
-        
-        for i in range(max_polls):
-            resp = requests.get(
-                url,
-                headers=self._headers(),
-                timeout=30,
-                proxies=Config.requests_proxies("ark"),
-            )
-            if not resp.ok:
-                raise self._provider_error(resp, "查询任务")
-            data = resp.json()
-            
+        resp = requests.get(
+            url,
+            headers=self._headers(),
+            timeout=30,
+            proxies=Config.requests_proxies("ark"),
+        )
+        if not resp.ok:
+            raise self._provider_error(resp, "查询任务")
+        data = resp.json()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"Seedance 查询任务返回格式异常: {type(data).__name__}")
+        return data
+
+    def _poll_until_done(
+        self,
+        task_id: str,
+        max_polls: Optional[int] = None,
+        interval: int = 5,
+        max_wait_seconds: int = 900,
+        task_state_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+    ) -> str:
+        started_at = time.monotonic()
+        deadline = started_at + max(30, max_wait_seconds)
+        poll_count = 0
+        last_status = ""
+
+        while time.monotonic() < deadline and (max_polls is None or poll_count < max_polls):
+            data = self.get_task(task_id)
+            poll_count += 1
             status = data.get("status")
+            elapsed_seconds = max(0, int(time.monotonic() - started_at))
+            if status != last_status:
+                logger.info("SeedanceVideoClient: task=%s status=%s elapsed=%ss", task_id, status, elapsed_seconds)
+                last_status = str(status or "")
+            self._notify_task_state(task_state_callback, {
+                "provider": "ark",
+                "provider_task_id": task_id,
+                "provider_status": status or "unknown",
+                "provider_created_at": data.get("created_at"),
+                "provider_updated_at": data.get("updated_at"),
+                "elapsed_seconds": elapsed_seconds,
+                "model": data.get("model"),
+            })
+
             if status == "succeeded":
                 # 根据实际返回体，URL 位于 content.video_url 或 video_url
                 video_url = data.get("content", {}).get("video_url") or data.get("video_url")
                 if not video_url:
                     raise RuntimeError(f"Seedance 任务成功但未返回视频 URL: {data}")
                 return video_url
-            elif status in ("failed", "expired"):
+            if status in ("failed", "expired", "cancelled"):
                 error_msg = data.get("error", {}).get("message") or data.get("status_msg") or "未知错误"
                 raise RuntimeError(f"Seedance 视频生成{status}: {error_msg}")
-            
-            logger.debug(f"SeedanceVideoClient: 任务进行中 {task_id}, status={status}, poll={i+1}")
-            time.sleep(interval)
-            
-        raise TimeoutError(f"Seedance 视频生成超时 (task_id={task_id})")
+
+            remaining = deadline - time.monotonic()
+            if remaining > 0:
+                time.sleep(min(interval, remaining))
+
+        raise TimeoutError(
+            f"Seedance 视频生成等待超时，供应商任务可能仍在执行，可使用任务 ID 恢复：{task_id}"
+        )
+
+    def download_task_result(
+        self,
+        task_id: str,
+        save_path: str,
+        expected_model: Optional[str] = None,
+        expected_duration: Optional[int] = None,
+    ) -> dict[str, Any]:
+        data = self.get_task(task_id)
+        status = data.get("status")
+        if status != "succeeded":
+            raise RuntimeError(f"Seedance 任务尚未成功，当前状态: {status or 'unknown'}")
+        actual_model = str(data.get("model") or "")
+        if expected_model and not str(expected_model).startswith("ep-") and actual_model != expected_model:
+            raise RuntimeError(
+                f"Seedance 任务模型不匹配，任务使用 {actual_model or 'unknown'}，项目需要 {expected_model}"
+            )
+        actual_duration = data.get("duration")
+        if expected_duration is not None and actual_duration is not None:
+            if int(actual_duration) != int(expected_duration):
+                raise RuntimeError(
+                    f"Seedance 任务时长不匹配，任务为 {actual_duration}s，目标片段为 {expected_duration}s"
+                )
+        video_url = data.get("content", {}).get("video_url") or data.get("video_url")
+        if not video_url:
+            raise RuntimeError("Seedance 任务成功但未返回视频 URL")
+        self._download_video(video_url, save_path)
+        return data
 
     def _download_video(self, url: str, save_path: str):
         os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        temp_path = f"{save_path}.part"
         resp = requests.get(url, stream=True, timeout=120, proxies=Config.requests_proxies("ark"))
         resp.raise_for_status()
-        with open(save_path, "wb") as f:
-            for chunk in resp.iter_content(chunk_size=8192):
-                if chunk:
-                    f.write(chunk)
+        try:
+            with open(temp_path, "wb") as f:
+                for chunk in resp.iter_content(chunk_size=8192):
+                    if chunk:
+                        f.write(chunk)
+            if not os.path.exists(temp_path) or os.path.getsize(temp_path) <= 0:
+                raise RuntimeError("Seedance 视频下载完成但文件为空")
+            os.replace(temp_path, save_path)
+        finally:
+            if os.path.exists(temp_path):
+                try:
+                    os.remove(temp_path)
+                except OSError:
+                    pass
         logger.info(f"SeedanceVideoClient: 视频已保存: {save_path}")
 
 if __name__ == "__main__":

@@ -1,12 +1,13 @@
 'use client';
 
 import React, { useState, useRef, useCallback, useEffect } from 'react';
-import { RefreshCw, ChevronLeft, ChevronRight, Loader, AlertCircle, AlertTriangle, Play, Edit2, Save, X } from 'lucide-react';
+import { RefreshCw, ChevronLeft, ChevronRight, Loader, AlertCircle, AlertTriangle, Play, Edit2, Save, X, CloudDownload } from 'lucide-react';
 import type { StageViewProps } from './types';
 import { assetUrl } from './utils';
 import StageActions from './StageActions';
 import StageProgress from './StageProgress';
 import { authenticatedFetch } from '@/lib/auth';
+import { recoverVideoTask } from '@/lib/workflowApi';
 
 /* ─── 类型 ─── */
 interface ClipItem {
@@ -19,6 +20,10 @@ interface ClipItem {
   versions: string[];     // 所有历史版本路径
   status?: 'pending' | 'done' | 'failed' | 'running';
   error?: string;
+  provider?: string;
+  provider_task_id?: string;
+  provider_status?: string;
+  elapsed_seconds?: number;
 }
 
 /* ─── 水平滚动视频画廊 ─── */
@@ -136,6 +141,9 @@ function ClipRow({
   disabled,
   isSaving,
   allowMissingGenerate,
+  onRecover,
+  isRecovering,
+  recoveryError,
 }: {
   clip: ClipItem;
   editDesc?: string;
@@ -152,6 +160,9 @@ function ClipRow({
   disabled?: boolean;
   isSaving?: boolean;
   allowMissingGenerate?: boolean;
+  onRecover?: () => void;
+  isRecovering?: boolean;
+  recoveryError?: string;
 }) {
   const isRunning = clip.status === 'running' || isRegenerating;
   const isPending = clip.status === 'pending';
@@ -180,6 +191,17 @@ function ClipRow({
           {isRunning && (
             <span className="inline-flex items-center gap-1 text-[10px] bg-amber-50 text-amber-600 px-1.5 py-0.5 rounded">
               <Loader className="w-2.5 h-2.5 animate-spin" />生成中
+            </span>
+          )}
+          {!hasVideo && clip.provider_status && (
+            <span className="text-[10px] bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded">
+              {clip.provider_status === 'queued'
+                ? '供应商排队中'
+                : clip.provider_status === 'running' || clip.provider_status === 'resuming'
+                  ? '供应商生成中'
+                  : clip.provider_status === 'downloading'
+                    ? '正在下载成品'
+                    : `供应商：${clip.provider_status}`}
             </span>
           )}
           {isFailed && (
@@ -251,6 +273,21 @@ function ClipRow({
             <RefreshCw className="w-3 h-3" />
             {isFailed ? '点击重试' : hasVideo ? '重新生成' : '生成'}
           </button>
+        )}
+        {!hasVideo && onRecover && (
+          <button
+            onClick={onRecover}
+            disabled={isRecovering}
+            className="mt-2 flex items-center gap-1.5 self-start px-3 py-1.5 rounded-lg text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 disabled:text-gray-400 disabled:bg-gray-100"
+          >
+            {isRecovering ? <Loader className="w-3 h-3 animate-spin" /> : <CloudDownload className="w-3 h-3" />}
+            {isRecovering ? '正在取回视频' : '恢复火山方舟任务'}
+          </button>
+        )}
+        {recoveryError && (
+          <p className="mt-2 break-words text-[11px] leading-relaxed text-red-600" role="alert">
+            {recoveryError}
+          </p>
         )}
         {isFailed && (
           <p className="mt-2 break-words text-[11px] leading-relaxed text-red-600" role="alert">
@@ -393,6 +430,8 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
   const regenerationStartCounts = useRef<Record<string, number>>({});
   const [editingIds, setEditingIds] = useState<Set<string>>(new Set());
   const [savingIds, setSavingIds] = useState<Set<string>>(new Set());
+  const [recoveringIds, setRecoveringIds] = useState<Set<string>>(new Set());
+  const [recoveryErrors, setRecoveryErrors] = useState<Record<string, string>>({});
 
   // 当分镜数据变化时，初始化编辑描述
   useEffect(() => {
@@ -513,6 +552,28 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
     onIntervene({ regenerate_clips: [clipId] });
   };
 
+  const handleRecover = async (clipId: string) => {
+    const taskId = window.prompt('粘贴火山方舟任务 ID（cgt- 开头）。恢复不会重新生成或重复扣费。');
+    if (!taskId?.trim()) return;
+    setRecoveringIds(prev => new Set(prev).add(clipId));
+    setRecoveryErrors(prev => ({ ...prev, [clipId]: '' }));
+    try {
+      const result = await recoverVideoTask(sessionId, clipId, taskId.trim());
+      onUpdateArtifact?.(result.artifact);
+    } catch (error: any) {
+      setRecoveryErrors(prev => ({
+        ...prev,
+        [clipId]: error?.message || '恢复火山方舟任务失败',
+      }));
+    } finally {
+      setRecoveringIds(prev => {
+        const next = new Set(prev);
+        next.delete(clipId);
+        return next;
+      });
+    }
+  };
+
   const handleSelectVersion = async (clipId: string, path: string) => {
     setSelectedVersions(prev => ({ ...prev, [clipId]: path }));
     // 同步更新 artifact 以便确认时能传递正确的选中片段给阶段6
@@ -630,6 +691,9 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
                               disabled={!hasRef}
                               isSaving={savingIds.has(clip.id)}
                               allowMissingGenerate={state.status !== 'pending'}
+                              onRecover={() => handleRecover(clip.id)}
+                              isRecovering={recoveringIds.has(clip.id)}
+                              recoveryError={recoveryErrors[clip.id]}
                             />
                           </div>
                         );

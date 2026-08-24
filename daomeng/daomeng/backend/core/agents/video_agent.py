@@ -13,7 +13,7 @@ import logging
 import os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .base_agent import AgentInterface
 
@@ -70,7 +70,9 @@ class VideoDirectorAgent(AgentInterface):
                       video_resolution: str = "720P",
                       video_generation_mode: str = "first_frame",
                       last_image_path: Optional[str] = None,
-                      reference_image_paths: Optional[List[str]] = None) -> tuple:
+                      reference_image_paths: Optional[List[str]] = None,
+                      provider_task_id: Optional[str] = None,
+                      task_state_callback: Optional[Callable[[dict], None]] = None) -> tuple:
         """生成单个视频片段，返回 (segment_id, path_or_None)"""
         if self.cancellation_check and self.cancellation_check():
             logger.info(f"VideoDirectorAgent: {segment_id} 跳过（用户取消）")
@@ -102,6 +104,8 @@ class VideoDirectorAgent(AgentInterface):
                 resolution=video_resolution,
                 last_image_path=last_image_path if video_generation_mode == "start_end_frame" else None,
                 reference_image_paths=reference_image_paths if video_generation_mode == "reference" else None,
+                provider_task_id=provider_task_id,
+                task_state_callback=task_state_callback,
             )
             if not os.path.exists(save_path):
                 raise RuntimeError("视频模型调用结束，但服务器没有获得可用的视频文件。")
@@ -115,6 +119,96 @@ class VideoDirectorAgent(AgentInterface):
                     pass
             # 必须让外层拿到供应商异常，才能转换为安全、可操作的错误并持久化。
             raise
+
+    def _make_task_state_callback(
+        self,
+        segment_id: str,
+        existing_versions: List[str],
+        local_clip: Optional[dict] = None,
+    ) -> Callable[[dict], None]:
+        """Persist Seedance task identity/status so a restart can resume without resubmitting."""
+        last_persisted = {"status": "", "at": 0.0}
+
+        def callback(task_state: dict) -> None:
+            import time
+
+            provider_status = str(task_state.get("provider_status") or "unknown")
+            now = time.time()
+            should_persist = (
+                provider_status != last_persisted["status"]
+                or now - float(last_persisted["at"] or 0) >= 60
+            )
+            if should_persist:
+                last_persisted["status"] = provider_status
+                last_persisted["at"] = now
+
+            progress = {
+                "queued": 10,
+                "resuming": 15,
+                "running": 35,
+                "downloading": 90,
+                "succeeded": 95,
+            }.get(provider_status, 20)
+            status_label = {
+                "queued": "供应商排队中",
+                "resuming": "正在恢复供应商任务",
+                "running": "供应商生成中",
+                "downloading": "视频已生成，正在下载",
+                "succeeded": "供应商任务已成功",
+            }.get(provider_status, f"供应商状态：{provider_status}")
+            asset_update = {
+                "type": "clips",
+                "id": segment_id,
+                "status": "running",
+                "versions": existing_versions,
+                "provider": task_state.get("provider") or "ark",
+                "provider_task_id": task_state.get("provider_task_id"),
+                "provider_status": provider_status,
+                "provider_created_at": task_state.get("provider_created_at"),
+                "provider_updated_at": task_state.get("provider_updated_at"),
+                "provider_model": task_state.get("model"),
+                "elapsed_seconds": task_state.get("elapsed_seconds", 0),
+            }
+            if isinstance(local_clip, dict):
+                local_clip.update({
+                    key: value
+                    for key, value in asset_update.items()
+                    if key not in {"type", "id", "versions"} and value is not None
+                })
+            self._report_progress(
+                "视频生成",
+                f"{segment_id}：{status_label}",
+                progress,
+                data={"asset_complete": asset_update, "persist": should_persist},
+            )
+
+        return callback
+
+    @staticmethod
+    def _resume_task_id(clip: Optional[dict]) -> Optional[str]:
+        if not isinstance(clip, dict):
+            return None
+        provider_status = str(clip.get("provider_status") or "").lower()
+        if provider_status in {"failed", "expired", "cancelled"}:
+            return None
+        task_id = str(clip.get("provider_task_id") or "").strip()
+        return task_id or None
+
+    @staticmethod
+    def _copy_provider_state(target: dict, source: Optional[dict]) -> None:
+        if not isinstance(source, dict):
+            return
+        for key in (
+            "provider",
+            "provider_task_id",
+            "provider_status",
+            "provider_created_at",
+            "provider_updated_at",
+            "provider_model",
+            "elapsed_seconds",
+        ):
+            if source.get(key) is not None:
+                target[key] = source[key]
 
     # ─── 提示词组装 ───
 
@@ -341,19 +435,26 @@ class VideoDirectorAgent(AgentInterface):
         for idx, seg in enumerate(segments, 1):
             segment_id = seg["segment_id"]
             versions = self._list_versions(sid, segment_id)
+            existing_clip = clip_map.get(segment_id)
             ep_n = seg.get('episode_number', 1)
             seg_n = seg.get('segment_number', idx)
-            preview.append({
+            item = {
                 "id": segment_id,
                 "name": f"第{ep_n}集-片段{seg_n}",
                 "episode": ep_n,
                 "index": seg_n,
-                "description": self._display_prompt(seg, clip_map.get(segment_id)),
+                "description": self._display_prompt(seg, existing_clip),
                 "duration": seg.get('total_duration', 10),
                 "selected": versions[-1] if versions else "",
                 "versions": versions,
-                "status": "done" if versions else "pending",
-            })
+                "status": "done" if versions else (
+                    existing_clip.get("status", "pending") if isinstance(existing_clip, dict) else "pending"
+                ),
+            }
+            self._copy_provider_state(item, existing_clip)
+            if isinstance(existing_clip, dict) and existing_clip.get("error") and not versions:
+                item["error"] = existing_clip["error"]
+            preview.append(item)
         return preview
 
     def _build_payload(self, sid: str, segments: list, video_clips: Optional[list] = None,
@@ -364,6 +465,7 @@ class VideoDirectorAgent(AgentInterface):
         for idx, seg in enumerate(segments, 1):
             segment_id = seg["segment_id"]
             versions = self._list_versions(sid, segment_id)
+            existing_clip = clip_map.get(segment_id)
             ep_n = seg.get('episode_number', 1)
             seg_n = seg.get('segment_number', idx)
             clip = {
@@ -371,14 +473,21 @@ class VideoDirectorAgent(AgentInterface):
                 "name": f"第{ep_n}集-片段{seg_n}",
                 "episode": ep_n,
                 "index": seg_n,
-                "description": self._display_prompt(seg, clip_map.get(segment_id)),
+                "description": self._display_prompt(seg, existing_clip),
                 "duration": seg.get('total_duration', 10),
                 "selected": versions[-1] if versions else "",
                 "versions": versions,
-                "status": "done" if versions else "failed",
+                "status": "done" if versions else (
+                    "failed" if errors.get(segment_id) else (
+                        existing_clip.get("status", "pending") if isinstance(existing_clip, dict) else "pending"
+                    )
+                ),
             }
+            self._copy_provider_state(clip, existing_clip)
             if errors.get(segment_id):
                 clip["error"] = errors[segment_id]
+            elif isinstance(existing_clip, dict) and existing_clip.get("error") and not versions:
+                clip["error"] = existing_clip["error"]
             clips.append(clip)
         return {
             "payload": {
@@ -510,6 +619,12 @@ class VideoDirectorAgent(AgentInterface):
                             if video_generation_mode == "start_end_frame" and not last_img_path:
                                 logger.warning("VideoDirectorAgent: %s 首尾帧模式缺少尾帧，回退为首帧生视频入参", seg_id)
                             existing_versions = self._list_versions(sid, seg_id)
+                            provider_task_id = self._resume_task_id(clip)
+                            task_state_callback = self._make_task_state_callback(
+                                seg_id,
+                                existing_versions,
+                                clip,
+                            )
                             self._report_progress("视频生成", f"启动生成: {seg_id}", 5, data={
                                 "asset_complete": {
                                     "type": "clips", "id": seg_id,
@@ -521,7 +636,8 @@ class VideoDirectorAgent(AgentInterface):
                                 self._generate_one, sid, seg_id, prompt,
                                 img_path, video_model, duration,
                                 video_sound, video_shot_type, video_ratio, video_resolution,
-                                video_generation_mode, last_img_path, reference_image_paths
+                                video_generation_mode, last_img_path, reference_image_paths,
+                                provider_task_id, task_state_callback,
                             )
                             futs[fut] = seg_id
                         for fut in as_completed(futs):
@@ -570,6 +686,7 @@ class VideoDirectorAgent(AgentInterface):
         def run():
             from models.public_errors import public_video_error
             tasks = []
+            clip_map = {c.get('id'): c for c in video_clips if isinstance(c, dict) and c.get('id')}
             for seg_index, seg in enumerate(segments):
                 seg_id = seg["segment_id"]
                 existing = self._list_versions(sid, seg_id)
@@ -588,14 +705,39 @@ class VideoDirectorAgent(AgentInterface):
                 last_img_path = self._get_next_reference_image(sid, seg_index, segments, scene_map)
                 if video_generation_mode == "start_end_frame" and not last_img_path:
                     logger.warning("VideoDirectorAgent: %s 首尾帧模式缺少尾帧，回退为首帧生视频入参", seg_id)
-                tasks.append((seg_id, prompt, img_path, duration, last_img_path, reference_image_paths))
+                local_clip = clip_map.get(seg_id)
+                if not isinstance(local_clip, dict):
+                    local_clip = {"id": seg_id, "status": "pending", "selected": "", "versions": []}
+                    video_clips.append(local_clip)
+                    clip_map[seg_id] = local_clip
+                provider_task_id = self._resume_task_id(local_clip)
+                tasks.append((
+                    seg_id,
+                    prompt,
+                    img_path,
+                    duration,
+                    last_img_path,
+                    reference_image_paths,
+                    provider_task_id,
+                    local_clip,
+                ))
             if not tasks:
                 self._report_progress("视频生成", "所有视频片段已存在", 95)
                 return
             done = 0
             with ThreadPoolExecutor(max_workers=concurrency) as executor:
                 futs = {}
-                for seg_id, prompt, img_path, dur, last_img_path, reference_image_paths in tasks:
+                for (
+                    seg_id,
+                    prompt,
+                    img_path,
+                    dur,
+                    last_img_path,
+                    reference_image_paths,
+                    provider_task_id,
+                    local_clip,
+                ) in tasks:
+                    task_state_callback = self._make_task_state_callback(seg_id, [], local_clip)
                     # 提交前立即发送正在运行的状态，让前端 UI 更新
                     self._report_progress("视频生成", f"启动生成: {seg_id}", 5, data={
                         "asset_complete": {
@@ -607,7 +749,8 @@ class VideoDirectorAgent(AgentInterface):
                         self._generate_one, sid, seg_id, prompt,
                         img_path, video_model, dur,
                         video_sound, video_shot_type, video_ratio, video_resolution,
-                        video_generation_mode, last_img_path, reference_image_paths
+                        video_generation_mode, last_img_path, reference_image_paths,
+                        provider_task_id, task_state_callback,
                     )
                     futs[fut] = seg_id
                 for fut in as_completed(futs):

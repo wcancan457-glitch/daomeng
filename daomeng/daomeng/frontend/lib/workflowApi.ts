@@ -360,6 +360,26 @@ export async function getArtifact(sessionId: string, stage: string): Promise<any
   return resp.json();
 }
 
+export async function recoverVideoTask(
+  sessionId: string,
+  clipId: string,
+  taskId: string,
+): Promise<{ status: string; artifact: any; status_map: Record<string, string> }> {
+  const resp = await authenticatedFetch(
+    `/api/project/${sessionId}/video/${encodeURIComponent(clipId)}/recover`,
+    {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task_id: taskId }),
+    },
+  );
+  if (!resp.ok) {
+    const err = await resp.json().catch(() => ({ detail: '恢复视频任务失败' }));
+    throw new Error(err.detail || '恢复视频任务失败');
+  }
+  return resp.json();
+}
+
 export async function checkSceneAssets(sessionId: string, sceneNumber: number): Promise<{
   scene_number: number;
   reference_images: number;

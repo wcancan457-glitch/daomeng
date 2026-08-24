@@ -14,7 +14,7 @@ if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
 import logging
-from typing import Optional
+from typing import Any, Callable, Optional
 from config import Config
 
 try:
@@ -111,6 +111,9 @@ class VideoClient:
         cfg_scale: float = 0.5,
         generate_audio: Optional[bool] = None,
         audio: Optional[bool] = None,
+        provider_task_id: Optional[str] = None,
+        task_state_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+        max_wait_seconds: int = 900,
     ) -> str:
         """
         生成视频
@@ -200,6 +203,9 @@ class VideoClient:
                 seed,
                 watermark,
                 generate_audio,
+                provider_task_id,
+                task_state_callback,
+                max_wait_seconds,
             )
         elif "wan" in model_lower or "happyhorse" in model_lower:
             return self._generate_wan(
@@ -325,6 +331,9 @@ class VideoClient:
         seed: Optional[int] = None,
         watermark: Optional[bool] = None,
         generate_audio: Optional[bool] = None,
+        provider_task_id: Optional[str] = None,
+        task_state_callback: Optional[Callable[[dict[str, Any]], None]] = None,
+        max_wait_seconds: int = 900,
     ) -> str:
         """通过 Seedance 模型生成视频"""
         logger.info("VideoClient routed to Seedance: model=%s", model)
@@ -339,6 +348,9 @@ class VideoClient:
             seed=seed,
             watermark=watermark,
             generate_audio=generate_audio,
+            provider_task_id=provider_task_id,
+            task_state_callback=task_state_callback,
+            max_wait_seconds=max_wait_seconds,
         )
 
 

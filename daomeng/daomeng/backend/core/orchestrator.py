@@ -981,6 +981,17 @@ class WorkflowEngine:
                             item["error"] = asset_update["error"]
                         else:
                             item.pop("error", None)
+                    for provider_key in (
+                        "provider",
+                        "provider_task_id",
+                        "provider_status",
+                        "provider_created_at",
+                        "provider_updated_at",
+                        "provider_model",
+                        "elapsed_seconds",
+                    ):
+                        if asset_update.get(provider_key) is not None:
+                            item[provider_key] = asset_update[provider_key]
                     return
 
             new_item = {
@@ -991,6 +1002,17 @@ class WorkflowEngine:
             }
             if asset_update.get("error"):
                 new_item["error"] = asset_update["error"]
+            for provider_key in (
+                "provider",
+                "provider_task_id",
+                "provider_status",
+                "provider_created_at",
+                "provider_updated_at",
+                "provider_model",
+                "elapsed_seconds",
+            ):
+                if asset_update.get(provider_key) is not None:
+                    new_item[provider_key] = asset_update[provider_key]
             items.append(new_item)
 
         def wrapped_progress_callback(phase: str, step: str, percent: float, data: dict = None):
@@ -1248,6 +1270,103 @@ class WorkflowEngine:
                 "status": "ok",
                 "status_map": copy.deepcopy(state.status),
                 "artifact": copy.deepcopy(state.artifacts.get(stage)),
+            }
+
+    def recover_seedance_video_task(self, session_id: str, clip_id: str, task_id: str) -> Dict[str, Any]:
+        """Attach an already-succeeded Ark task to one project clip without creating a paid task."""
+        if not re.fullmatch(r"cgt-[A-Za-z0-9_-]{6,96}", str(task_id or "")):
+            raise ValueError("火山方舟任务 ID 格式无效")
+        if not re.fullmatch(r"[A-Za-z0-9_-]{1,80}", str(clip_id or "")):
+            raise ValueError("视频片段 ID 格式无效")
+
+        with self._state_lock:
+            state = self.get_state(session_id)
+            if not state:
+                raise KeyError(f"Session not found: {session_id}")
+            self._restore_state_media(state)
+
+            video_artifact = state.artifacts.get("video_generation", {})
+            clips = video_artifact.get("clips", []) if isinstance(video_artifact, dict) else []
+            clip = next(
+                (item for item in clips if isinstance(item, dict) and item.get("id") == clip_id),
+                None,
+            )
+            if clip is None:
+                raise ValueError("当前项目中不存在该视频片段")
+
+            expected_duration = int(clip.get("duration") or 0) or None
+            mode = state.meta.get("video_generation_mode") or "first_frame"
+            model_key = {
+                "first_frame": "video_first_frame_model",
+                "start_end_frame": "video_start_end_model",
+                "reference": "video_reference_model",
+            }.get(mode, "video_first_frame_model")
+            expected_model = (
+                state.meta.get(model_key)
+                or state.meta.get("video_model")
+                or "doubao-seedance-2-0-260128"
+            )
+
+        from core.agents.video_agent import VideoDirectorAgent
+        from models.video_seedance import SeedanceVideoClient
+
+        video_dir = VideoDirectorAgent._video_base(session_id)
+        os.makedirs(video_dir, exist_ok=True)
+        safe_task_suffix = re.sub(r"[^A-Za-z0-9_-]", "", task_id)[-24:]
+        save_path = os.path.join(video_dir, f"{clip_id}_recovered_{safe_task_suffix}.mp4")
+
+        client = SeedanceVideoClient()
+        task_data = client.download_task_result(
+            task_id,
+            save_path,
+            expected_model=str(expected_model),
+            expected_duration=expected_duration,
+        )
+        if not os.path.isfile(save_path) or os.path.getsize(save_path) <= 0:
+            raise RuntimeError("供应商任务成功，但导梦未能保存视频文件")
+
+        with self._state_lock:
+            state = self.get_state(session_id)
+            if not state:
+                raise KeyError(f"Session not found: {session_id}")
+            video_artifact = state.artifacts.setdefault("video_generation", {})
+            clips = video_artifact.setdefault("clips", [])
+            clip = next(
+                (item for item in clips if isinstance(item, dict) and item.get("id") == clip_id),
+                None,
+            )
+            if clip is None:
+                raise ValueError("当前项目中不存在该视频片段")
+
+            versions = clip.get("versions") if isinstance(clip.get("versions"), list) else []
+            if save_path not in versions:
+                versions.append(save_path)
+            clip.update({
+                "selected": save_path,
+                "versions": versions,
+                "status": "done",
+                "provider": "ark",
+                "provider_task_id": task_id,
+                "provider_status": "succeeded",
+                "provider_created_at": task_data.get("created_at"),
+                "provider_updated_at": task_data.get("updated_at"),
+                "provider_model": task_data.get("model"),
+                "elapsed_seconds": max(
+                    0,
+                    int(task_data.get("updated_at") or 0) - int(task_data.get("created_at") or 0),
+                ),
+            })
+            clip.pop("error", None)
+            state.error = None
+            state.updated_at = datetime.now()
+            self._recalculate_all_statuses(state)
+            self.save_session_to_disk(session_id)
+            return {
+                "status": "ok",
+                "clip_id": clip_id,
+                "provider_task_id": task_id,
+                "artifact": copy.deepcopy(video_artifact),
+                "status_map": copy.deepcopy(state.status),
             }
 
     def _apply_artifact_update(self, state: WorkflowState, stage: str, body: Dict[str, Any]):

@@ -1,4 +1,5 @@
 import asyncio
+from pathlib import Path
 
 import pytest
 
@@ -185,6 +186,78 @@ def test_seedance_submit_payload_omits_null_optional_parameters() -> None:
     )
     assert explicit["watermark"] is False
     assert explicit["generate_audio"] is False
+
+
+def test_seedance_existing_task_resumes_without_resubmitting(tmp_path, monkeypatch) -> None:
+    client = SeedanceVideoClient(api_key="test-key")
+    output = tmp_path / "recovered.mp4"
+    events = []
+
+    def fail_submit(*_args, **_kwargs):
+        raise AssertionError("existing provider task must not be submitted again")
+
+    def fake_poll(task_id, **kwargs):
+        assert task_id == "cgt-existing-123"
+        kwargs["task_state_callback"]({
+            "provider": "ark",
+            "provider_task_id": task_id,
+            "provider_status": "succeeded",
+        })
+        return "https://example.invalid/video.mp4"
+
+    monkeypatch.setattr(client, "_submit_task", fail_submit)
+    monkeypatch.setattr(client, "_poll_until_done", fake_poll)
+    monkeypatch.setattr(client, "_download_video", lambda _url, path: Path(path).write_bytes(b"video"))
+
+    client.generate_video(
+        "镜头缓慢推进",
+        str(tmp_path / "missing-but-not-needed.png"),
+        str(output),
+        provider_task_id="cgt-existing-123",
+        task_state_callback=events.append,
+    )
+
+    assert output.read_bytes() == b"video"
+    assert events[0]["provider_status"] == "resuming"
+    assert events[-1]["provider_status"] == "succeeded"
+
+
+def test_video_task_state_is_kept_in_final_payload(monkeypatch) -> None:
+    agent = VideoDirectorAgent()
+    monkeypatch.setattr(agent, "_list_versions", lambda *_args: [])
+    local_clip = {
+        "id": "seg_01_01",
+        "status": "running",
+        "selected": "",
+        "versions": [],
+    }
+    progress_events = []
+    agent.set_progress_callback(lambda phase, step, percent, data: progress_events.append(data))
+    callback = agent._make_task_state_callback("seg_01_01", [], local_clip)
+    callback({
+        "provider": "ark",
+        "provider_task_id": "cgt-persist-123",
+        "provider_status": "running",
+        "elapsed_seconds": 30,
+        "model": "doubao-seedance-2-0-260128",
+    })
+
+    payload = agent._build_payload(
+        "provider-state-contract",
+        [{
+            "segment_id": "seg_01_01",
+            "episode_number": 1,
+            "segment_number": 1,
+            "shots": [],
+            "total_duration": 5,
+        }],
+        [local_clip],
+    )
+    clip = payload["payload"]["clips"][0]
+    assert clip["status"] == "running"
+    assert clip["provider_task_id"] == "cgt-persist-123"
+    assert clip["provider_status"] == "running"
+    assert progress_events[0]["persist"] is True
 
 
 def test_reference_generation_skips_stale_asset_paths(tmp_path) -> None:

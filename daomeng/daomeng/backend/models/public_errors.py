@@ -62,6 +62,10 @@ def public_video_error(exc: Exception, provider: str = "视频模型") -> str:
         return prefix + "请求过于频繁或账户额度不足，请稍后重试并检查余额。"
     if "timeout" in lower or "timed out" in lower or "超时" in lower:
         return prefix + "生成任务响应超时，请稍后重试。"
+    if "任务尚未成功" in str(exc):
+        return prefix + str(exc).split("Seedance", 1)[-1].strip(" ：:")
+    if "任务模型不匹配" in str(exc) or "任务时长不匹配" in str(exc):
+        return prefix + str(exc).split("Seedance", 1)[-1].strip(" ：:")
     if "not found" in lower or "404" in lower or "尚未在项目中注册" in lower:
         return prefix + "模型 ID 不存在或尚未接入当前项目。"
     if "invalidparameter" in lower or "invalid parameter" in lower or "unsupportedparameter" in lower:

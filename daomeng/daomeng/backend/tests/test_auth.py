@@ -431,6 +431,63 @@ def test_projects_and_tasks_are_isolated_by_user() -> None:
 
         project_state = workflow_engine.get_state(project_id)
         assert project_state is not None
+
+        # A succeeded Ark task can be recovered into the original clip without
+        # submitting another paid generation request.
+        project_state.meta.update({
+            "video_generation_mode": "first_frame",
+            "video_first_frame_model": "doubao-seedance-2-0-260128",
+        })
+        project_state.artifacts["video_generation"] = {
+            "clips": [{
+                "id": "seg_01_02",
+                "name": "第1集-片段2",
+                "duration": 7,
+                "description": "镜头缓慢推进",
+                "selected": "",
+                "versions": [],
+                "status": "failed",
+            }],
+        }
+        workflow_engine.save_session_to_disk(project_id)
+
+        def fake_download_task_result(_self, task_id, save_path, expected_model=None, expected_duration=None):
+            assert task_id == "cgt-test-recovery-123"
+            assert expected_model == "doubao-seedance-2-0-260128"
+            assert expected_duration == 7
+            Path(save_path).write_bytes(b"test-video-content")
+            return {
+                "id": task_id,
+                "status": "succeeded",
+                "model": expected_model,
+                "duration": expected_duration,
+                "created_at": 100,
+                "updated_at": 287,
+            }
+
+        with patch(
+            "models.video_seedance.SeedanceVideoClient.download_task_result",
+            new=fake_download_task_result,
+        ):
+            recovered_video = client.post(
+                f"/api/project/{project_id}/video/seg_01_02/recover",
+                headers=auth_header(first_token),
+                json={"task_id": "cgt-test-recovery-123"},
+            )
+        assert recovered_video.status_code == 200
+        recovered_clip = recovered_video.json()["artifact"]["clips"][0]
+        assert recovered_clip["status"] == "done"
+        assert recovered_clip["provider_task_id"] == "cgt-test-recovery-123"
+        assert recovered_clip["elapsed_seconds"] == 187
+        assert Path(recovered_clip["selected"]).is_file()
+
+        denied_recovery = client.post(
+            f"/api/project/{project_id}/video/seg_01_02/recover",
+            headers=auth_header(second_token),
+            json={"task_id": "cgt-test-recovery-123"},
+        )
+        assert denied_recovery.status_code == 404
+
         project_state.current_stage = WorkflowStage.CHARACTER_DESIGN
         project_state.status[WorkflowStage.CHARACTER_DESIGN.value] = "waiting"
         blocked_continue = client.post(
