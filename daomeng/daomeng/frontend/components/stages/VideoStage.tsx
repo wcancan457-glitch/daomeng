@@ -428,6 +428,18 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
 
   const hasClips = clips.length > 0;
   const canEdit = state.status === 'waiting' || state.status === 'completed';
+  // 兼容修复前创建的会话：旧版预览清单没有 generation_started 字段。
+  // 只要所有片段都仍是纯 pending 且没有任何视频版本，就应视为“尚未提交”，
+  // 而不是含糊地显示为“继续生成”。
+  const isGenerationPrepared = state.artifact?.generation_started === false || (
+    state.artifact?.generation_started == null &&
+    clips.length > 0 &&
+    clips.every(clip =>
+      (clip.status === 'pending' || !clip.status) &&
+      !clip.selected &&
+      (clip.versions?.length || 0) === 0
+    )
+  );
 
   // 保存单个提示词到后端 JSON
   const handleSavePrompt = async (clipId: string) => {
@@ -530,9 +542,10 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
           将场景参考图转化为视频片段，支持逐项重新生成
         </p>
 
-        {state.artifact?.generation_started === false && (
-          <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 text-sm text-rose-900">
-            视频任务尚未提交。请先检查每个片段的首帧参考图和时长，确认无误后点击底部“开始生成视频”。
+        {isGenerationPrepared && (
+          <div aria-live="polite" className="mb-5 rounded-xl border border-blue-200 bg-blue-50 px-4 py-3 text-sm text-blue-950">
+            <p className="font-medium">视频任务已准备，但尚未调用视频模型。</p>
+            <p className="mt-1 text-blue-800">请检查每个片段的首帧参考图和时长，确认无误后点击底部“开始生成视频”。</p>
           </div>
         )}
         {/* 运行中 */}
@@ -630,7 +643,7 @@ export default function VideoStage({ state, sessionId, onConfirm, onIntervene, o
         hasPendingItems={hasPendingItems}
         hasNextStageStarted={hasNextStageStarted}
         isRunning={isRunning}
-        generationPrepared={state.artifact?.generation_started === false}
+        generationPrepared={isGenerationPrepared}
       />
     </div>
   );

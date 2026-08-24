@@ -73,6 +73,9 @@ export default function StageActions({
   const generateLabel = generationPrepared
     ? stageId === 'video_generation' ? '开始生成视频' : '开始 AI 生图'
     : isContinueStage ? '继续生成' : '重新生成';
+  const generateButtonClass = generationPrepared
+    ? 'bg-blue-600 border border-blue-600 text-white hover:bg-blue-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 focus-visible:ring-offset-2'
+    : 'bg-white border border-orange-300 text-orange-600 hover:bg-orange-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-orange-400 focus-visible:ring-offset-2';
 
   const handleSaveClick = useCallback(async () => {
     if (!onSaveSelections || saveState !== 'idle') return;
@@ -96,7 +99,7 @@ export default function StageActions({
           <button
             onClick={onRegenerate}
             disabled={isButtonDisabled}
-            className="flex items-center gap-2 px-4 py-2 bg-white border border-orange-300 text-orange-600 rounded-lg text-sm font-medium hover:bg-orange-50 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            className={`flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed ${generateButtonClass}`}
             title={isButtonDisabled ? (status === 'error' ? '重新尝试生成' : (isContinueStage && !hasPendingItems ? '所有项已生成完毕' : (isRegenStage && hasNextStageStarted ? '后续阶段已开始，无法重新生成' : ''))) : ''}
           >
             {isContinueStage ? <Play className="w-4 h-4" /> : <RefreshCw className="w-4 h-4" />}

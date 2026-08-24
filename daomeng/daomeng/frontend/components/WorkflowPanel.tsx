@@ -821,6 +821,7 @@ export default function WorkflowPanel() {
               setCompletedStagesFromSession(prev => [...prev, nextStage]);
               setCurrentStageFromSession(nextStage);
               setActiveStage(nextStage);
+              router.replace(`/?session=${sessionId}&stage=${nextStage}`, { scroll: false });
               break;
             }
           } else if (nStageStatus === 'waiting') {
@@ -828,6 +829,7 @@ export default function WorkflowPanel() {
             updateStageState(nextStage, { status: 'waiting' });
             setCurrentStageFromSession(nextStage);
             setActiveStage(nextStage);
+            router.replace(`/?session=${sessionId}&stage=${nextStage}`, { scroll: false });
             break;
           }
         }
