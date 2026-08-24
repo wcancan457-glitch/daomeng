@@ -93,7 +93,7 @@ async def start_project(req: ProjectStartRequest, request: Request):
         "web_search": req.web_search if req.web_search is not None else False,
         "episodes": 1 if req.creation_mode == "trial" else (req.episodes if req.episodes is not None else 4),
         "creation_mode": "trial" if req.creation_mode == "trial" else "full",
-        "trial_duration_seconds": max(5, min(15, req.trial_duration_seconds or 15)),
+        "trial_duration_seconds": max(2, min(15, req.trial_duration_seconds or 15)),
         "trial_status": "generating" if req.creation_mode == "trial" else None,
         "user_id": user_id,
     }

@@ -331,12 +331,12 @@ class WorkflowEngine:
             if not state:
                 raise KeyError(session_id)
             if state.meta.get("creation_mode") != "trial":
-                raise ValueError("当前项目不是15秒试片，不能执行试片扩展。")
+                raise ValueError("当前项目不是轻量试片，不能执行试片扩展。")
             post_artifact = state.artifacts.get(WorkflowStage.POST_PRODUCTION.value)
             if not isinstance(post_artifact, dict) or not (
                 post_artifact.get("final_videos") or post_artifact.get("final_video")
             ):
-                raise ValueError("请先完成15秒试片，再扩展为完整一集。")
+                raise ValueError("请先完成轻量试片，再扩展为完整一集。")
 
             snapshot = {
                 stage.value: copy.deepcopy(state.artifacts.get(stage.value, {}))

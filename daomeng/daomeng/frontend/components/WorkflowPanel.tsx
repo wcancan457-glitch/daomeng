@@ -637,7 +637,7 @@ export default function WorkflowPanel() {
     }
   };
 
-  // ── 将已通过的15秒试片扩展为同一项目中的完整一集 ──
+  // ── 将已通过的轻量试片扩展为同一项目中的完整一集 ──
   const handleExpandTrial = async () => {
     if (!sessionId || !projectParams || isRunning) return;
     setIsRunning(true);

@@ -33,6 +33,13 @@ def test_trial_splits_for_models_with_twelve_second_clip_limit() -> None:
     assert sum(item["total_duration"] for item in segments) == 15
 
 
+def test_short_trial_is_not_padded_to_fifteen_seconds() -> None:
+    limited = limit_trial_storyboard(_storyboard(4, 3), 15)
+    segments = limited["episodes"][0]["segments"]
+    assert [item["total_duration"] for item in segments] == [4, 3]
+    assert limited["trial_duration_seconds"] == 7
+
+
 def test_expansion_keeps_trial_segments_and_only_appends_continuation() -> None:
     trial = limit_trial_storyboard(_storyboard(8, 8), 15)
     expanded = merge_trial_opening(_storyboard(10, 10, 10, 10), trial, 15)

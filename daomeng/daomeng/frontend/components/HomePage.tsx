@@ -473,10 +473,10 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
                     ? 'bg-blue-600 text-white hover:bg-blue-700 shadow-sm'
                     : 'bg-gray-100 text-gray-400 cursor-not-allowed'
                 )}
-                title="按六个阶段逐步确认，只生成支撑15秒成片所需的素材"
+                title="按六个阶段逐步确认，根据剧情生成不超过15秒的轻量试片"
               >
                 <Clapperboard className="w-4 h-4" />
-                先做15秒试片
+                先做≤15秒试片
               </button>
               <button
                 onClick={() => handleStart(true, 'full')}
@@ -496,7 +496,7 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
           </div>
           <div className="mt-3 flex items-center justify-end gap-2 text-xs text-blue-700">
             <Clock className="h-3.5 w-3.5" />
-            <span>试片仍按六阶段逐步确认；只准备15秒所需素材，满意后可扩展成1–2分钟完整一集</span>
+            <span>试片仍按六阶段逐步确认；时长由剧情决定且不超过15秒，满意后可扩展成完整一集</span>
           </div>
           {(configLoading || configError) && (
             <div className={clsx('mt-3 text-xs', configError ? 'text-red-500' : 'text-gray-400')}>
@@ -719,7 +719,9 @@ export default function HomePage({ onStartProject, onResumeProject, onDeleteSess
             <button
               onClick={() => setManageMode(m => !m)}
               className={`ml-auto text-xs px-2 py-0.5 rounded transition-colors ${
-                manageMode ? 'bg-red-100 text-red-600' : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                manageMode
+                  ? 'bg-red-100 text-red-600'
+                  : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
               }`}
             >
               {manageMode ? '完成' : '管理'}

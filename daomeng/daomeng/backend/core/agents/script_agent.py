@@ -28,6 +28,13 @@ class ScriptWriterAgent(AgentInterface):
         super().__init__(name="ScriptWriter")
 
     @staticmethod
+    def _needs_visual_enrichment(description: Any, is_zh: bool) -> bool:
+        text = str(description or "").strip()
+        if is_zh:
+            return len(re.findall(r"[\u4e00-\u9fff]", text)) < 60
+        return len(text.split()) < 60
+
+    @staticmethod
     def _extract_json_from_text(text: str) -> Optional[Any]:
         text = text.strip()
         text = re.sub(r'^```(?:json)?\s*', '', text)
@@ -446,7 +453,7 @@ class ScriptWriterAgent(AgentInterface):
 
             # 1. Generate the script. Trial mode intentionally uses a shorter, single-pass prompt.
             if creation_mode == "trial":
-                _log_progress(10, "正在生成15秒试片剧本...")
+                _log_progress(10, "正在生成≤15秒轻量试片剧本...")
                 prompt = _get_script_prompt("generate_trial", "zh").format(idea=idea, style=style)
             elif creation_mode == "expanded":
                 _log_progress(10, "正在沿用试片扩展完整一集...")
@@ -501,6 +508,48 @@ class ScriptWriterAgent(AgentInterface):
 
             all_characters = meta_data.get("characters", [])
             all_settings = meta_data.get("settings", [])
+            if any(
+                self._needs_visual_enrichment(item.get("description"), is_zh)
+                for item in all_characters
+                if isinstance(item, dict)
+            ):
+                _log_progress(68, "人物视觉描述较短，正在补全面部、服装和材质细节...")
+                enrich_prompt = _get_script_prompt(
+                    "enrich_character_profiles", "zh" if is_zh else "en"
+                ).format(
+                    script_text=full_script_text,
+                    characters_json=json.dumps(all_characters, ensure_ascii=False),
+                )
+                try:
+                    enrich_raw = await loop.run_in_executor(
+                        None,
+                        self._cancellable_query,
+                        llm,
+                        enrich_prompt,
+                        [],
+                        llm_model,
+                        True,
+                        sid,
+                        False,
+                    )
+                    enriched_payload = self._extract_json_from_text(enrich_raw)
+                    enriched_characters = (
+                        enriched_payload.get("characters", [])
+                        if isinstance(enriched_payload, dict)
+                        else []
+                    )
+                    enriched_by_name = {
+                        str(item.get("name") or "").strip(): item
+                        for item in enriched_characters
+                        if isinstance(item, dict) and item.get("name")
+                    }
+                    for character in all_characters:
+                        enriched = enriched_by_name.get(str(character.get("name") or "").strip())
+                        if enriched and len(str(enriched.get("description") or "")) > len(str(character.get("description") or "")):
+                            character["description"] = enriched["description"]
+                            character["species"] = enriched.get("species") or character.get("species") or "人类"
+                except Exception as exc:
+                    logger.warning("[ScriptWriter] Character visual enrichment skipped: %s", exc)
             if creation_mode == "trial":
                 all_characters = all_characters[:2]
                 all_settings = all_settings[:1]

@@ -77,18 +77,6 @@ def limit_trial_storyboard(
             remaining -= seconds
             source_remaining -= seconds
 
-    if kept and remaining > 0:
-        kept[-1] = _trim_segment(
-            kept[-1],
-            min(_duration(kept[-1]) + remaining, max_segment_seconds),
-        )
-        remaining = duration_seconds - sum(_duration(item) for item in kept)
-
-    # Unknown providers may have a lower clip ceiling. Never silently claim a
-    # 15-second result if the constrained material cannot cover all 15 seconds.
-    if kept and remaining > 0 and len(kept) < TRIAL_MAX_SEGMENTS:
-        kept.append(_trim_segment(kept[-1], min(remaining, max_segment_seconds)))
-
     for index, segment in enumerate(kept, 1):
         segment["episode_number"] = 1
         segment["segment_number"] = index
@@ -96,7 +84,7 @@ def limit_trial_storyboard(
 
     first_episode = copy.deepcopy(episodes[0])
     first_episode["episode_number"] = 1
-    first_episode["episode_title"] = first_episode.get("episode_title") or "15秒试片"
+    first_episode["episode_title"] = first_episode.get("episode_title") or "轻量试片"
     first_episode["segments"] = kept
     result["episodes"] = [first_episode]
     result["trial_duration_seconds"] = sum(_duration(item) for item in kept)
@@ -113,6 +101,11 @@ def merge_trial_opening(full_payload: Dict[str, Any], trial_payload: Dict[str, A
         return result
 
     trial_segments = copy.deepcopy(trial_episodes[0].get("segments") or [])
+    duration_seconds = int(
+        (trial_payload or {}).get("trial_duration_seconds")
+        or sum(_duration(item) for item in trial_segments)
+        or duration_seconds
+    )
     full_segments = copy.deepcopy(full_episodes[0].get("segments") or [])
     consumed = 0
     continuation: List[Dict[str, Any]] = []

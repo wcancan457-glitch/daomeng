@@ -3,19 +3,20 @@ Seedream 图像生成 API 客户端
 字节跳动 ARK - doubao-seedream-5-0-260128 模型
 """
 
+import logging
 import os
 import sys
+import time
+from typing import Dict, List, Optional
+
+import httpx
+from openai import OpenAI
 
 models_dir = os.path.dirname(os.path.abspath(__file__))
 backend_dir = os.path.dirname(models_dir)
 if backend_dir not in sys.path:
     sys.path.insert(0, backend_dir)
 
-import time
-import logging
-import httpx
-from typing import Optional, List, Dict
-from openai import OpenAI
 from config import Config
 
 # 模型名称映射表（旧名称 -> 新名称）
@@ -40,6 +41,14 @@ def normalize_model_name(model: str) -> str:
         规范化后的模型名称
     """
     return MODEL_NAME_MAP.get(model, model)
+
+
+def supports_sequential_image_generation(model: str) -> bool:
+    """Whether ARK documents the sequential-image switch for this model."""
+    return any(
+        family in str(model or "").lower()
+        for family in ("seedream-5-0-lite", "seedream-4-5", "seedream-4-0")
+    )
 
 
 class SeedreamClient:
@@ -162,10 +171,12 @@ class SeedreamClient:
                 height = height if height % 2 == 0 else height + 1
 
         # 构建 extra_body
-        extra_body = {
-            "watermark": False,
-            "sequential_image_generation": "disabled",
-        }
+        extra_body = {"watermark": False}
+        # The ARK ImageGenerations API only supports this switch for
+        # Seedream 5.0 Lite, 4.5 and 4.0. Sending it to Seedream 5.0 full
+        # makes the whole character/setting batch fail with HTTP 400.
+        if supports_sequential_image_generation(model):
+            extra_body["sequential_image_generation"] = "disabled"
 
         # 添加其他参数
         if "seed" in kwargs:
@@ -176,7 +187,6 @@ class SeedreamClient:
             extra_body["style"] = kwargs["style"]
 
         # 处理参考图 (图生图)
-        image_urls = []
         if image_paths and len(image_paths) > 0:
             # 处理参考图：支持 URL 和本地文件
             ref_images = []

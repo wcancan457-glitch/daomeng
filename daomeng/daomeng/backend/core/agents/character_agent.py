@@ -36,7 +36,7 @@ class CharacterDesignerAgent(AgentInterface):
         # 加载基础角色提示词模板
         template = load_prompt('character', 'character', 'zh')
         # 替换角色信息
-        return template.format(name=name, desc=desc, style=style)
+        return template.format(name=name, desc=desc, style=style, species=species or "人类")
 
     @staticmethod
     def _setting_prompt(name: str, desc: str, style: str) -> str:

@@ -42,13 +42,14 @@ export default function PostProductionStage({ state, onConfirm, onRegenerate, is
     if (legacyVideo) return [{ name: '最终成片', path: legacyVideo, episode: 1 }];
     return [];
   }, [finalVideos, legacyVideo]);
+  const trialDuration = Math.max(1, Number(artifacts?.storyboard?.trial_duration_seconds || 15));
 
   return (
     <div className="flex flex-col h-full">
       <div className="flex-1 min-w-0 overflow-y-auto p-4 sm:p-6">
         <h2 className="text-lg font-semibold text-gray-800 mb-1">后期剪辑</h2>
         <p className="text-sm text-gray-500 mb-6">
-          {creationMode === 'trial' ? '15秒试片已沿用完整工作流完成，可先验证风格和人物表现' : '按剧集拼接视频，生成各集独立成片'}
+          {creationMode === 'trial' ? `${trialDuration}秒轻量试片已完成，可先验证风格和人物表现` : '按剧集拼接视频，生成各集独立成片'}
         </p>
 
         {/* 运行中 */}
@@ -107,17 +108,17 @@ export default function PostProductionStage({ state, onConfirm, onRegenerate, is
             <div className="max-w-2xl">
               <h3 className="text-base font-semibold text-blue-950">这支试片可以直接交付，也可以继续长成完整一集</h3>
               <p className="mt-1 text-sm leading-6 text-blue-800">
-                扩展会保留当前15秒作为开场，复用已有角色、场景、首帧和视频，只生成后续缺少的内容。
+                扩展会保留当前{trialDuration}秒作为开场，复用已有角色、场景、首帧和视频，只生成后续缺少的内容。
               </p>
             </div>
             <div className="mt-4 flex flex-wrap gap-2 sm:mt-0 sm:shrink-0">
               <a
                 href={assetUrl(videosToDisplay[0].path)}
-                download="导梦-15秒试片.mp4"
+                download={`导梦-${trialDuration}秒试片.mp4`}
                 className="inline-flex items-center gap-2 rounded-xl bg-white px-4 py-2.5 text-sm font-medium text-blue-800 shadow-sm hover:bg-blue-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500"
               >
                 <Download className="h-4 w-4" />
-                导出15秒试片
+                导出{trialDuration}秒试片
               </a>
               <button
                 type="button"

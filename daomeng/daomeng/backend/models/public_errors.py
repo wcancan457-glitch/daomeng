@@ -22,6 +22,10 @@ def public_image_error(exc: Exception, provider: str = "图片模型") -> str:
         return prefix + "模型已经返回结果，但服务器下载图片失败。"
     if "not found" in lower or "404" in lower:
         return prefix + "接口地址或模型 ID 不存在，请检查 base_url 与模型选择。"
-    if "content" in lower and ("policy" in lower or "safety" in lower or "risk" in lower):
+    if "sensitivecontentdetected" in lower or (
+        "content" in lower and ("policy" in lower or "safety" in lower or "risk" in lower or "sensitive" in lower)
+    ):
         return prefix + "提示词触发了供应商的内容安全策略。"
+    if "invalidparameter" in lower or "unsupportedparameter" in lower or "unknown parameter" in lower:
+        return prefix + "当前模型不支持本次请求参数，请检查模型版本或生成配置。"
     return prefix + "调用失败，请到管理端运行连通性检测后重试。"
