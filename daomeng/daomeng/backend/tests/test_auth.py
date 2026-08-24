@@ -4,6 +4,8 @@ from io import BytesIO
 from pathlib import Path
 from unittest.mock import Mock, patch
 
+import pytest
+
 _test_dir = Path(tempfile.mkdtemp(prefix="daomeng-auth-tests-"))
 os.environ["DATABASE_URL"] = f"sqlite:///{(_test_dir / 'auth.db').as_posix()}"
 os.environ["RUNTIME_DATA_DIR"] = str(_test_dir / "runtime")
@@ -12,6 +14,7 @@ os.environ["AUTH_TOKEN_SECRET"] = "test-only-secret-that-is-longer-than-thirty-t
 os.environ["SETTINGS_ENCRYPTION_KEY"] = "test-only-settings-encryption-key"
 os.environ["AUTH_COOKIE_SECURE"] = "false"
 os.environ["REGISTRATION_ENABLED"] = "true"
+os.environ["AUTH_RATE_LIMIT_PER_MINUTE"] = "1000"
 os.environ["PIPELINE_WORKER_ENABLED"] = "false"
 
 from fastapi.testclient import TestClient  # noqa: E402
@@ -19,13 +22,16 @@ from PIL import Image  # noqa: E402
 from sqlalchemy import select  # noqa: E402
 
 from accounts.database import SessionLocal  # noqa: E402
-from accounts.models import SystemSetting, User  # noqa: E402
+from accounts.models import AdminAuditLog, SystemSetting, User  # noqa: E402
 from api.app import app  # noqa: E402
 from core.orchestrator import WorkflowEngine  # noqa: E402
 from pipelines.storage import (  # noqa: E402
+    TaskQuotaError,
     claim_next_pending_task,
     create_task,
+    delete_task,
     load_task,
+    mark_failed,
     recover_interrupted_tasks,
 )
 
@@ -80,6 +86,9 @@ def test_register_login_refresh_and_logout() -> None:
         current = client.get("/api/auth/me", headers=auth_header(first_access_token))
         assert current.status_code == 200
         assert current.json()["user"]["email"] == "creator@example.com"
+
+        forbidden_admin = client.get("/api/admin/overview", headers=auth_header(first_access_token))
+        assert forbidden_admin.status_code == 403
 
         visible_config = client.get("/api/config", headers=auth_header(first_access_token))
         assert visible_config.status_code == 200
@@ -219,6 +228,86 @@ def test_admin_can_save_encrypted_model_credentials() -> None:
             assert record is not None
             assert "sf-test-secret" not in record.encrypted_value
             assert "ark-test-secret" not in record.encrypted_value
+
+
+def test_admin_console_controls_users_tasks_and_quotas() -> None:
+    admin_email = "console-admin@example.com"
+    admin_password = "console admin secure password"
+    managed_email = "managed-user@example.com"
+    with TestClient(app) as client:
+        admin_registration = client.post(
+            "/api/auth/register",
+            json={"email": admin_email, "password": admin_password, "display_name": "运营管理员"},
+        )
+        assert admin_registration.status_code == 201
+        managed_registration = client.post(
+            "/api/auth/register",
+            json={"email": managed_email, "password": "managed user secure password"},
+        )
+        assert managed_registration.status_code == 201
+        managed_user_id = managed_registration.json()["user"]["id"]
+
+        with SessionLocal() as db:
+            admin = db.scalar(select(User).where(User.normalized_email == admin_email))
+            assert admin is not None
+            admin.role = "admin"
+            db.commit()
+
+        login = client.post(
+            "/api/auth/login",
+            json={"email": admin_email, "password": admin_password},
+        )
+        headers = auth_header(login.json()["access_token"])
+
+        overview = client.get("/api/admin/overview", headers=headers)
+        assert overview.status_code == 200
+        assert overview.json()["users"]["total"] >= 2
+
+        users = client.get("/api/admin/users?q=managed-user", headers=headers)
+        assert users.status_code == 200
+        assert [item["email"] for item in users.json()["users"]] == [managed_email]
+
+        limited = client.patch(
+            f"/api/admin/users/{managed_user_id}",
+            headers=headers,
+            json={"daily_llm_limit": 5, "daily_image_limit": 3, "daily_video_limit": 0},
+        )
+        assert limited.status_code == 200
+        assert limited.json()["user"]["limits"] == {"llm": 5, "image": 3, "video": 0}
+        with pytest.raises(TaskQuotaError, match="额度已用完"):
+            create_task("standard", {"text": "blocked"}, user_id=managed_user_id)
+
+        enabled = client.patch(
+            f"/api/admin/users/{managed_user_id}",
+            headers=headers,
+            json={"daily_video_limit": 2},
+        )
+        assert enabled.status_code == 200
+        task = create_task("standard", {"text": "retry me"}, user_id=managed_user_id)
+        mark_failed(task["task_id"], "provider unavailable")
+
+        tasks = client.get("/api/admin/tasks?status=failed", headers=headers)
+        assert tasks.status_code == 200
+        assert task["task_id"] in {item["task_id"] for item in tasks.json()["tasks"]}
+        retried = client.post(f"/api/admin/tasks/{task['task_id']}/retry", headers=headers)
+        assert retried.status_code == 200
+        assert retried.json()["task"]["status"] == "pending"
+
+        models = client.get("/api/admin/models", headers=headers)
+        assert models.status_code == 200
+        assert "llm" in models.json()["assignments"]
+        assert all("api_key" not in item for item in models.json()["providers"])
+
+        system = client.get("/api/admin/system", headers=headers)
+        assert system.status_code == 200
+        assert system.json()["database"]["status"] == "ready"
+
+        audit = client.get("/api/admin/audit", headers=headers)
+        assert audit.status_code == 200
+        assert {item["action"] for item in audit.json()["logs"]} >= {"user.update", "task.retry"}
+        with SessionLocal() as db:
+            assert db.scalar(select(AdminAuditLog)) is not None
+        assert delete_task(task["task_id"], user_id=managed_user_id) is True
 
 
 def test_projects_and_tasks_are_isolated_by_user() -> None:

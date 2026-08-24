@@ -66,6 +66,10 @@ class PipelineQueueWorker:
     def notify(self) -> None:
         self._wake.set()
 
+    @property
+    def is_running(self) -> bool:
+        return bool(self._workers) and any(not worker.done() for worker in self._workers)
+
     async def _run(self, index: int) -> None:
         while not self._stop.is_set():
             metadata = await asyncio.to_thread(claim_next_pending_task)

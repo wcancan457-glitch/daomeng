@@ -6,15 +6,17 @@ import uuid
 from datetime import datetime
 from typing import List
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
 
+from accounts.database import SessionLocal
 from accounts.ownership import (
     delete_task_ownership,
     register_task,
     save_task_payload,
     task_payloads_for_user,
 )
+from accounts.quotas import DailyQuotaError, enforce_daily_quota
 from api.auth_context import request_user_id
 from api.routers.files import resolve_user_media_path
 from api.schemas.sandbox import (
@@ -146,6 +148,7 @@ def _add_record(
             "output": output_data,
             "files": files or [],
             "created_at": datetime.now().isoformat(),
+            "status": "completed",
         }
         history = _load_history()
         history.insert(0, record)  # 最新记录放在最前面
@@ -156,9 +159,15 @@ def _add_record(
 
 def _start_active_task(tool: str, model: str, input_data: dict, user_id: str) -> str:
     with SANDBOX_LOCK:
+        category = "llm" if tool in {"llm", "vlm"} else "image" if tool in {"t2i", "i2i"} else "video"
+        with SessionLocal() as db:
+            try:
+                enforce_daily_quota(db, user_id, category)
+            except DailyQuotaError as exc:
+                raise HTTPException(status_code=429, detail=str(exc)) from exc
         task_id = str(uuid.uuid4().hex[:8])
         register_task(task_id, user_id, task_kind="sandbox")
-        SANDBOX_ACTIVE_TASKS[task_id] = {
+        active_task = {
             "id": task_id,
             "user_id": user_id,
             "tool": tool,
@@ -168,6 +177,8 @@ def _start_active_task(tool: str, model: str, input_data: dict, user_id: str) ->
             "progress": 1,
             "created_at": datetime.now().isoformat(),
         }
+        SANDBOX_ACTIVE_TASKS[task_id] = active_task
+        save_task_payload(task_id, user_id, active_task, task_kind="sandbox")
         return task_id
 
 

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
-from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, String, Text
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from accounts.database import Base
@@ -25,6 +25,9 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="user", index=True)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     email_verified: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    daily_llm_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=100)
+    daily_image_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=10)
+    daily_video_limit: Mapped[int] = mapped_column(Integer, nullable=False, default=2)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
@@ -99,3 +102,15 @@ class SystemSetting(Base):
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow, onupdate=utcnow
     )
+
+
+class AdminAuditLog(Base):
+    __tablename__ = "admin_audit_logs"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    actor_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    action: Mapped[str] = mapped_column(String(80), nullable=False, index=True)
+    target_type: Mapped[str] = mapped_column(String(40), nullable=False, index=True)
+    target_id: Mapped[str] = mapped_column(String(120), nullable=False, default="")
+    details: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, default=utcnow, index=True)

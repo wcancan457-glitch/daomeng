@@ -1,5 +1,6 @@
 """API routers."""
 
+from .admin import router as admin_router
 from .auth import router as auth_router
 from .configuration import router as configuration_router
 from .files import router as files_router
@@ -20,4 +21,5 @@ __all__ = [
     "pipelines_router",
     "configuration_router",
     "auth_router",
+    "admin_router",
 ]

@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from starlette.concurrency import run_in_threadpool
 
+from accounts.audit import record_admin_action
 from accounts.database import get_db
 from accounts.settings_store import save_runtime_config
 from api.auth_context import request_user_role, require_admin
@@ -94,6 +95,14 @@ async def update_config(
     actor_id = require_admin(request)
     values = _merge_secret_updates(Config.as_dict(), req.values)
     save_runtime_config(db, values, actor_id)
+    record_admin_action(
+        db,
+        actor_id=actor_id,
+        action="config.update",
+        target_type="model_config",
+        target_id="model_gateway_config_v1",
+        details={"sections": sorted(req.values.keys())},
+    )
     config = Config.apply_runtime_config(values)
     apply_log_level_setting()
     apply_access_log_setting()

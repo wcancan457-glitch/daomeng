@@ -35,6 +35,7 @@ with SessionLocal() as db:
         logger.info("Encrypted administrator model configuration loaded")
 
 from api.routers import (
+    admin_router,
     auth_router,
     configuration_router,
     files_router,
@@ -85,6 +86,7 @@ app.include_router(sandbox_router)
 app.include_router(pipelines_router)
 app.include_router(configuration_router)
 app.include_router(auth_router)
+app.include_router(admin_router)
 logger.info("API routers registered")
 
 

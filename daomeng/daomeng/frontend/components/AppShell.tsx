@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useRouter } from 'next/navigation';
-import { CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock, Hexagon, Home, Loader2, Repeat2, Settings, Trash2, UserRound, LogOut, Menu, Sparkles, X } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, ChevronRight, Clapperboard, Clock, Hexagon, Home, Loader2, Repeat2, Settings, ShieldCheck, Trash2, UserRound, LogOut, Menu, Sparkles, X } from 'lucide-react';
 import clsx from 'clsx';
 import { useCallback, useEffect, useState, type CSSProperties } from 'react';
 import { clearTempCache, fetchPipelineTasks, fetchSandboxTasks, fetchSessions, type PipelineTask, type SandboxTask } from '@/lib/workflowApi';
@@ -19,6 +19,7 @@ const NAV_ITEMS = [
 ];
 
 const SETTINGS_ITEM = { href: '/settings', label: '模型配置', icon: Settings };
+const ADMIN_ITEM = { href: '/admin', label: '运营控制台', icon: ShieldCheck };
 
 const PIPELINE_ROUTES: Record<string, { href: string; label: string }> = {
   standard: { href: '/pipelines/standard', label: '文艺短视频' },
@@ -323,7 +324,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    if (!canManageSettings && pathname.startsWith('/settings')) router.replace('/');
+    if (!canManageSettings && (pathname.startsWith('/settings') || pathname.startsWith('/admin'))) router.replace('/');
   }, [canManageSettings, pathname, router]);
 
   const setSidebarOpen = (nextOpen: boolean) => {
@@ -426,7 +427,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
             </button>
           </div>
           <nav className="min-h-0 flex-1 overflow-y-auto p-3 space-y-1">
-            {(canManageSettings ? [...NAV_ITEMS, SETTINGS_ITEM] : NAV_ITEMS).map(item => {
+            {(canManageSettings ? [...NAV_ITEMS, ADMIN_ITEM, SETTINGS_ITEM] : NAV_ITEMS).map(item => {
               const Icon = item.icon;
               const active = item.href === '/' ? pathname === '/' : pathname.startsWith(item.href);
               return (
@@ -459,7 +460,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                     setSettingsMenuOpen(false);
                     router.push(SETTINGS_ITEM.href);
                   }}
-                  className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium text-gray-700 hover:bg-blue-50 hover:text-blue-700 focus-visible:outline-2 focus-visible:outline-blue-600"
+                  className="flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium text-blue-700 hover:bg-blue-50 focus-visible:outline-2 focus-visible:outline-blue-600"
                 >
                   <Settings className="h-4 w-4" />
                   模型配置
@@ -468,7 +469,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
                   type="button"
                   onClick={() => handleClearCache()}
                   disabled={clearingCache}
-                  className="mt-1 flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium text-gray-700 hover:bg-red-50 hover:text-red-700 focus-visible:outline-2 focus-visible:outline-red-600 disabled:cursor-not-allowed disabled:opacity-60"
+                  className="mt-1 flex h-10 w-full items-center gap-2 rounded-lg px-3 text-left text-sm font-medium text-red-700 hover:bg-red-50 focus-visible:outline-2 focus-visible:outline-red-600 disabled:cursor-not-allowed disabled:opacity-60"
                 >
                   {clearingCache ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
                   清空缓存
@@ -511,7 +512,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
       {open && (
         <button
           onClick={() => setSidebarOpen(false)}
-          className="fixed left-60 top-1/2 z-50 hidden h-14 w-7 -translate-y-1/2 items-center justify-center rounded-r-xl border border-l-0 border-gray-200 bg-white text-gray-500 shadow-[6px_8px_18px_-14px_rgba(15,23,42,0.7)] transition-all hover:w-9 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 md:flex"
+          className="fixed left-60 top-1/2 z-50 hidden h-14 w-7 -translate-y-1/2 items-center justify-center rounded-r-xl border border-l-0 border-gray-200 bg-white text-blue-700 shadow-[6px_8px_18px_-14px_rgba(15,23,42,0.7)] transition-all hover:w-9 hover:border-blue-200 hover:bg-blue-50 md:flex"
           title="收起侧边栏"
           aria-label="收起侧边栏"
         >
@@ -523,7 +524,7 @@ export default function AppShell({ children }: { children: React.ReactNode }) {
         <>
           <button
             onClick={() => setSidebarOpen(true)}
-            className="fixed left-0 top-1/2 z-50 hidden h-14 w-7 -translate-y-1/2 items-center justify-center rounded-r-xl border border-l-0 border-gray-200 bg-white text-gray-500 shadow-[6px_8px_18px_-14px_rgba(15,23,42,0.7)] transition-all hover:w-9 hover:border-blue-200 hover:bg-blue-50 hover:text-blue-700 md:flex"
+            className="fixed left-0 top-1/2 z-50 hidden h-14 w-7 -translate-y-1/2 items-center justify-center rounded-r-xl border border-l-0 border-gray-200 bg-white text-blue-700 shadow-[6px_8px_18px_-14px_rgba(15,23,42,0.7)] transition-all hover:w-9 hover:border-blue-200 hover:bg-blue-50 md:flex"
             title="打开侧边栏"
             aria-label="打开侧边栏"
           >

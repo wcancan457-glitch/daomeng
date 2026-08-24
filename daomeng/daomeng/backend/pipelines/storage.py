@@ -19,6 +19,7 @@ from accounts.ownership import (
     save_task_payload,
     task_payloads_for_user,
 )
+from accounts.quotas import DailyQuotaError, enforce_daily_quota
 from config import settings
 
 from .events import publish_task_event
@@ -150,6 +151,10 @@ def create_task(
     with _task_store_lock:
         if user_id != "legacy-shared":
             with SessionLocal() as db:
+                try:
+                    enforce_daily_quota(db, user_id, "video")
+                except DailyQuotaError as exc:
+                    raise TaskQuotaError(str(exc)) from exc
                 pending_count = db.scalar(
                     select(func.count())
                     .select_from(TaskOwnership)
